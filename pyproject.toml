@@ -1,0 +1,17 @@
+[project]
+name = "harness-studio"
+version = "0.1.0"
+description = "A self-evolving harness optimizer: propose, test against a real benchmark with a noise-aware gate, keep only what helps, and revise the search itself."
+requires-python = ">=3.10"
+dependencies = []  # stdlib-only core
+
+[project.optional-dependencies]
+yaml = ["pyyaml>=6.0"]      # only needed to load .yaml configs
+dev = ["pytest>=7.0", "pyyaml>=6.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.setuptools.packages.find]
+include = ["studio*"]
