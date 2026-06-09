@@ -28,7 +28,7 @@ def test_nexau_last_trace_extracts_verifier_and_trajectory(tmp_path):
                 "E FileNotFoundError: /app/out.txt\n2 failed",
                 [{"role": "assistant", "content": "I will run gzip"},
                  {"role": "tool", "content": "gzip: command not found"}])
-    bench._index_trials(jobs, ["write-compressor"])
+    bench._capture_traces(jobs, ["write-compressor"])
     trace = bench.last_trace("write-compressor")
     assert "FileNotFoundError" in trace          # verifier signal
     assert "gzip: command not found" in trace     # agent trajectory signal

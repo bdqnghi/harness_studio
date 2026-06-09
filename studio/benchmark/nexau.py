@@ -129,8 +129,10 @@ class NexauBenchmark(Benchmark):
         self.agent_config_filename = agent_config_filename
         # Faithful to evolve.py: use AHE's pinned harbor (it registers `nexau`).
         self.harbor_bin = Path(harbor_bin) if harbor_bin else self.ahe_dir / ".venv" / "bin" / "harbor"
-        # task_id -> trial dir from the most recent run (for last_trace / trace-feeding).
-        self._trial_dirs: dict[str, Path] = {}
+        # task_id -> extracted failure excerpt from the most recent run (for
+        # trace-feeding). Stored in-memory so the on-disk jobs dir can be deleted
+        # right after each eval — avoids unbounded disk growth over a long run.
+        self._traces: dict[str, str] = {}
 
     # --- task discovery ---
 
@@ -234,26 +236,29 @@ class NexauBenchmark(Benchmark):
                 cmd, cwd=str(self.ahe_dir), env=self._subprocess_env(),
                 stdout=log, stderr=subprocess.STDOUT,
             )
-        self._index_trials(jobs_dir, task_ids)
-        return parse_harbor_results(jobs_dir, task_ids)
+        results = parse_harbor_results(jobs_dir, task_ids)
+        self._capture_traces(jobs_dir, task_ids)
+        # Free disk immediately: the excerpts we need are now in memory, so the
+        # (potentially large) per-trial logs/traces don't accumulate across a run.
+        shutil.rmtree(work, ignore_errors=True)
+        return results
 
     # --- trace-feeding: surface why a task failed (PRD §5.1 trajectory) ---
 
-    def _index_trials(self, jobs_dir: Path, task_ids: list[str]) -> None:
-        """Map each task to its trial dir so last_trace() can read the failure."""
+    def _capture_traces(self, jobs_dir: Path, task_ids: list[str]) -> None:
+        """Extract a concise failure excerpt per task into memory (so the jobs
+        dir can be deleted right after)."""
         for reward_file in Path(jobs_dir).rglob("verifier/reward.txt"):
             trial_dir = reward_file.parent.parent  # <task>__<trial>/
             tid = trial_dir.name.split("__", 1)[0]
             if tid in task_ids:
-                self._trial_dirs[tid] = trial_dir
+                self._traces[tid] = self._extract_excerpt(trial_dir)
 
-    def last_trace(self, task_id: str) -> str:
-        trial = self._trial_dirs.get(task_id)
-        if trial is None or not trial.exists():
-            return ""
+    @staticmethod
+    def _extract_excerpt(trial_dir: Path) -> str:
         parts: list[str] = []
         # 1. Why the verifier failed (the most informative signal).
-        verifier = trial / "verifier" / "test-stdout.txt"
+        verifier = trial_dir / "verifier" / "test-stdout.txt"
         if verifier.exists():
             try:
                 txt = verifier.read_text(errors="replace").strip()
@@ -262,11 +267,13 @@ class NexauBenchmark(Benchmark):
             except OSError:
                 pass
         # 2. The agent's last actions / final output.
-        tracer = trial / "agent" / "nexau_in_memory_tracer.cleaned.json"
-        excerpt = self._tracer_excerpt(tracer)
+        excerpt = NexauBenchmark._tracer_excerpt(trial_dir / "agent" / "nexau_in_memory_tracer.cleaned.json")
         if excerpt:
             parts.append("agent trajectory (tail):\n" + excerpt)
         return "\n\n".join(parts)[:2400]
+
+    def last_trace(self, task_id: str) -> str:
+        return self._traces.get(task_id, "")
 
     @staticmethod
     def _tracer_excerpt(tracer: Path) -> str:
