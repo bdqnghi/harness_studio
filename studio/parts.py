@@ -65,7 +65,12 @@ class PartMap:
         return bool(self.parts.get(part))
 
     def editable_files(self) -> list[str]:
-        """All files the optimizer is allowed to change, de-duplicated."""
+        """All files the optimizer is allowed to change, de-duplicated.
+
+        An entry ending in ``/`` is a *directory* part: any file under it (new or
+        existing) is editable and belongs to that part. This lets the optimizer
+        ADD new tools/middleware/skills (as AHE can), not just edit existing files.
+        """
         seen: list[str] = []
         for paths in self.parts.values():
             for p in paths:
@@ -73,10 +78,27 @@ class PartMap:
                     seen.append(p)
         return seen
 
+    @staticmethod
+    def _matches(entry: str, path: str) -> bool:
+        if entry.endswith("/"):
+            return path == entry.rstrip("/") or path.startswith(entry)
+        return path == entry
+
+    def is_editable(self, path: str) -> bool:
+        """Whether ``path`` may be changed: an exact mapped file, or any file
+        under a mapped directory entry (an entry ending in ``/``)."""
+        return any(self._matches(e, path) for paths in self.parts.values() for e in paths)
+
     def part_of(self, path: str) -> PartType | None:
-        """Which part type a given file belongs to, or None if do-not-touch."""
+        """Which part type a given file belongs to, or None if do-not-touch.
+
+        Supports directory part entries (``"tools/"`` matches ``tools/x.py``).
+        Exact-file entries take precedence over directory entries."""
         for part, paths in self.parts.items():
             if path in paths:
+                return part
+        for part, paths in self.parts.items():
+            if any(self._matches(e, path) for e in paths):
                 return part
         return None
 

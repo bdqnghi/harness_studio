@@ -50,12 +50,14 @@ def enforce(
     budget_per_part: int = 3,
 ) -> ShellResult:
     """Validate (and minimally repair) a candidate's edits in place."""
-    editable = set(part_map.editable_files())
     reverted: list[str] = []
 
-    # 1. Revert any change to a do-not-touch / unmapped file.
+    # 1. Revert any change to a do-not-touch / unmapped file. A part entry ending
+    #    in "/" is a directory: new files created under it (e.g. a new tool) are
+    #    editable, so the optimizer can ADD capabilities, not just edit existing
+    #    files (matching AHE's freedom).
     for rel in _changed_files(original, candidate):
-        if rel not in editable:
+        if not part_map.is_editable(rel):
             _revert(original, candidate, rel)
             reverted.append(rel)
 
