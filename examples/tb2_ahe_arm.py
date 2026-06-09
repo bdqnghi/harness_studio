@@ -105,7 +105,7 @@ def cmd_prepare(args) -> None:
     print(f"dataset dir : {DATASET_DIR}  ({len(tasks)} tasks)")
     print(f"  tasks     : {tasks}")
     print(f"overlay     : {overlay}")
-    print(f"iterations  : {args.iterations}  (gpt-5.4 actor=high, evolve=xhigh, ADB off, explore off)")
+    print(f"iterations  : {args.iterations}  (gpt-5.4 actor=high, evolve=high, ADB off, explore off)")
     print("\nrun the AHE arm with:")
     print(f"  cd {AHE} && uv run python evolve.py --config {overlay}")
 

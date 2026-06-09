@@ -9,8 +9,8 @@
 - We **wired harness_studio to optimize AHE's exact input harness** (`code_agent_simple`, a bare nexau agent) on Terminal-Bench 2, scored by the **identical** `harbor run --agent nexau` path with the **same frozen actor** (gpt-5.4). Calibrated end-to-end: `fix-git` = 1.0 in 2.4 min.
 - We **gave our optimizer AHE-equivalent freedom** (it can now *add* tools/middleware/skills, not just edit existing files) and **strengthened** it (failure-trace feeding to the Diagnoser; capability-add hints).
 - A **small-scale head-to-head ran** (7 tasks, 3 held-out). Both optimizers **independently converged on the same edit — adding file tools.** Ours **gated** it (didn't help the judging tasks → rejected → held baseline); AHE **committed** it blind (still 0/4 on the pool).
-- **No valid pass-rate verdict yet.** The held-out scoring was corrupted when the local Docker box ran out of disk (98% full → `fix-git` measured 0.0 vs its proven 1.0). We refuse to report that as a win — it isn't one.
-- **Next:** run the full, diverse TB 2.0 head-to-head on an adequately-resourced machine (turnkey via this branch), where the optimizer's edge can actually show. Locally, a verdict is possible only after disk is freed.
+- **No valid pass-rate verdict yet.** A first held-out scoring was corrupted by transient eval-box degradation (under concurrent container load the disk-pressured box timed out — `fix-git` measured 0.0 vs its proven 1.0). The box then **recovered** (a single-task probe scored `fix-git` 1.0 in 1.9 min), so a clean **one-task-at-a-time (`n=1`) re-score is now in progress**; results pending. We refuse to report the corrupted numbers as a win — they aren't one.
+- **Next:** finish the clean `n=1` local re-score for a preliminary signal, then run the full, diverse TB 2.0 head-to-head on an adequately-resourced machine (turnkey via this branch), where the optimizer's edge can actually show.
 
 ---
 
@@ -69,7 +69,7 @@ Decide whether harness_studio's "stochastic harness optimization" is good enough
 | Strengthening (trace-feeding, capability hints, disk-fix) | ✅ committed |
 | Calibration + full-loop smoke on real TB2 | ✅ |
 | 88 unit tests | ✅ green |
-| **Valid ours-vs-AHE held-out verdict** | ❌ **blocked** — eval env (disk/slowness) |
+| **Valid ours-vs-AHE held-out verdict** | ⏳ **in progress** — box recovered (single-task `fix-git`=1.0/1.9 min); clean `n=1` re-score running |
 
 ## 5. Next plan
 
