@@ -76,3 +76,39 @@ def test_diagnoser_includes_trace_evidence():
     diagnoser.diagnose(be, fails)
     assert "failure evidence" in be.prompt
     assert "AssertionError boom" in be.prompt
+
+
+def test_run_executes_full_cleanup_path(tmp_path, monkeypatch):
+    """Exercise NexauBenchmark.run() end-to-end with a faked harbor so the
+    parse + trace-capture + shutil.rmtree cleanup path is covered (the unit tests
+    only hit _capture_traces directly, which let a missing `import shutil` slip
+    into run() unnoticed)."""
+    from pathlib import Path
+
+    from studio.harness import Harness
+
+    (tmp_path / "harbor").write_text("")  # harbor_bin must .exists()
+    (tmp_path / "h").mkdir()
+    (tmp_path / "h" / "code_agent.yaml").write_text("name: x\n")
+    bench = NexauBenchmark(real=True, harbor_bin=tmp_path / "harbor")
+    monkeypatch.setattr(bench, "_link_dataset",
+                        lambda task_ids, dest: dest.mkdir(parents=True, exist_ok=True))
+    monkeypatch.setattr(bench, "_subprocess_env", lambda: {})
+    work_dirs = []
+
+    def fake_run(cmd, **kw):
+        jobs = Path(cmd[cmd.index("--jobs-dir") + 1])
+        work_dirs.append(jobs.parent)
+        trial = jobs / "ts" / "t1__abc" / "verifier"
+        trial.mkdir(parents=True)
+        (trial / "reward.txt").write_text("1.0")
+
+        class R:
+            returncode = 0
+
+        return R()
+
+    monkeypatch.setattr("studio.benchmark.nexau.subprocess.run", fake_run)
+    scores = bench.run(Harness(tmp_path / "h"), ["t1"], run_idx=0)
+    assert scores == {"t1": 1.0}
+    assert work_dirs and not work_dirs[0].exists()  # cleanup ran (no NameError)
