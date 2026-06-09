@@ -18,6 +18,7 @@ bare single-shell-tool agent real headroom to improve.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -26,10 +27,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from studio.components.splitter import TaskSplit, split_tasks  # noqa: E402
 from studio.config import PileConfig  # noqa: E402
 
-SEED = 7
+SEED = int(os.environ.get("TB2_SEED", "7"))
 
 # 16 fixed tasks (4 easy / 9 medium / 3 hard), all in ~/.cache/harbor/tasks.
-TASKS: list[str] = [
+_FULL_TASKS: list[str] = [
     # easy
     "fix-git",
     "cobol-modernization",
@@ -51,9 +52,24 @@ TASKS: list[str] = [
     "write-compressor",
 ]
 
-# final_exam (6) is the locked held-out pile; audit(3)+judging(3)+practice(4)=10
-# form the optimization pool both arms may learn from.
-PILES = PileConfig(practice=4, judging=3, audit=3, final_exam=6)
+# A smaller shared set can be selected via env (for a feasibility-limited local
+# head-to-head) WITHOUT changing the committed full set — both arms read this,
+# so the held-out pile and optimization pool stay consistent across arms.
+#   export TB2_TASKS="fix-git,cobol-modernization,..."  TB2_FINAL=3 TB2_AUDIT=1 TB2_JUDGING=2
+if os.environ.get("TB2_TASKS"):
+    TASKS = [t.strip() for t in os.environ["TB2_TASKS"].split(",") if t.strip()]
+    PILES = PileConfig(
+        practice=max(1, len(TASKS) - int(os.environ.get("TB2_FINAL", "3"))
+                     - int(os.environ.get("TB2_AUDIT", "1")) - int(os.environ.get("TB2_JUDGING", "2"))),
+        judging=int(os.environ.get("TB2_JUDGING", "2")),
+        audit=int(os.environ.get("TB2_AUDIT", "1")),
+        final_exam=int(os.environ.get("TB2_FINAL", "3")),
+    )
+else:
+    TASKS = _FULL_TASKS
+    # final_exam (6) is the locked held-out pile; audit(3)+judging(3)+practice(4)=10
+    # form the optimization pool both arms may learn from.
+    PILES = PileConfig(practice=4, judging=3, audit=3, final_exam=6)
 
 
 def split() -> TaskSplit:
