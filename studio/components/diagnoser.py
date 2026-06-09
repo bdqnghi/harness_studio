@@ -23,9 +23,19 @@ def diagnose(
 ) -> list[dict]:
     if not failures:
         return []
-    listing = "\n".join(f"- {f.task_id}: {f.description}" for f in failures)
+
+    def _entry(f: Failure) -> str:
+        head = f"- {f.task_id}: {f.description}"
+        if f.trace:
+            # Indent the trace so the cluster listing stays readable.
+            body = "\n".join("    " + ln for ln in f.trace.splitlines())
+            return f"{head}\n  failure evidence:\n{body}"
+        return head
+
+    listing = "\n".join(_entry(f) for f in failures)
     prompt = (
-        "These benchmark tasks failed. Cluster them by failure mode, infer the "
+        "These benchmark tasks failed. Use the failure evidence (verifier output "
+        "and the agent's last actions) to cluster them by failure mode, infer the "
         "root cause of each cluster, and blame the harness part most likely "
         "responsible.\n\n"
         f"Blame must be one of: {', '.join(_BLAME_OPTIONS)}.\n\n"

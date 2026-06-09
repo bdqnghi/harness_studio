@@ -42,3 +42,12 @@ class Benchmark(abc.ABC):
 
         Default is the id; targets enrich it (the toy adds input -> expected)."""
         return task_id
+
+    def last_trace(self, task_id: str) -> str:
+        """A concise excerpt of why ``task_id`` failed on its most recent run —
+        the verifier output and the agent's last actions. Fed to the Diagnoser so
+        it blames a real cause, not just the task name. Default: none.
+
+        Real targets override this; it must degrade gracefully (return "") when no
+        trace is available, so the loop never depends on it."""
+        return ""

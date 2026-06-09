@@ -129,6 +129,8 @@ class NexauBenchmark(Benchmark):
         self.agent_config_filename = agent_config_filename
         # Faithful to evolve.py: use AHE's pinned harbor (it registers `nexau`).
         self.harbor_bin = Path(harbor_bin) if harbor_bin else self.ahe_dir / ".venv" / "bin" / "harbor"
+        # task_id -> trial dir from the most recent run (for last_trace / trace-feeding).
+        self._trial_dirs: dict[str, Path] = {}
 
     # --- task discovery ---
 
@@ -232,7 +234,64 @@ class NexauBenchmark(Benchmark):
                 cmd, cwd=str(self.ahe_dir), env=self._subprocess_env(),
                 stdout=log, stderr=subprocess.STDOUT,
             )
+        self._index_trials(jobs_dir, task_ids)
         return parse_harbor_results(jobs_dir, task_ids)
+
+    # --- trace-feeding: surface why a task failed (PRD §5.1 trajectory) ---
+
+    def _index_trials(self, jobs_dir: Path, task_ids: list[str]) -> None:
+        """Map each task to its trial dir so last_trace() can read the failure."""
+        for reward_file in Path(jobs_dir).rglob("verifier/reward.txt"):
+            trial_dir = reward_file.parent.parent  # <task>__<trial>/
+            tid = trial_dir.name.split("__", 1)[0]
+            if tid in task_ids:
+                self._trial_dirs[tid] = trial_dir
+
+    def last_trace(self, task_id: str) -> str:
+        trial = self._trial_dirs.get(task_id)
+        if trial is None or not trial.exists():
+            return ""
+        parts: list[str] = []
+        # 1. Why the verifier failed (the most informative signal).
+        verifier = trial / "verifier" / "test-stdout.txt"
+        if verifier.exists():
+            try:
+                txt = verifier.read_text(errors="replace").strip()
+                if txt:
+                    parts.append("verifier output (tail):\n" + txt[-1000:])
+            except OSError:
+                pass
+        # 2. The agent's last actions / final output.
+        tracer = trial / "agent" / "nexau_in_memory_tracer.cleaned.json"
+        excerpt = self._tracer_excerpt(tracer)
+        if excerpt:
+            parts.append("agent trajectory (tail):\n" + excerpt)
+        return "\n\n".join(parts)[:2400]
+
+    @staticmethod
+    def _tracer_excerpt(tracer: Path) -> str:
+        if not tracer.exists():
+            return ""
+        try:
+            import json
+
+            data = json.loads(tracer.read_text(errors="replace"))
+        except (OSError, ValueError):
+            return ""
+        msgs = data.get("messages") if isinstance(data, dict) else None
+        if isinstance(msgs, list) and msgs:
+            chunks: list[str] = []
+            for m in msgs[-4:]:
+                if not isinstance(m, dict):
+                    continue
+                role = m.get("role", "?")
+                content = m.get("content")
+                if isinstance(content, list):  # tool/content blocks
+                    content = " ".join(str(c.get("text", c)) if isinstance(c, dict) else str(c) for c in content)
+                chunks.append(f"[{role}] {str(content)[:600]}")
+            return "\n".join(chunks)[-1400:]
+        out = data.get("output") if isinstance(data, dict) else None
+        return str(out)[-1400:] if out else ""
 
     # --- free structural pre-gate ---
 

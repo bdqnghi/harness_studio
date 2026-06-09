@@ -37,6 +37,9 @@ class InstrumentedBenchmark(Benchmark):
     def describe(self, task_id: str) -> str:
         return self.inner.describe(task_id)
 
+    def last_trace(self, task_id: str) -> str:
+        return self.inner.last_trace(task_id)
+
     def run(self, harness, task_ids, *, run_idx=0):
         h = harness.content_hash()
         out: dict[str, float] = {}

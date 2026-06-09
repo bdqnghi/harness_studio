@@ -17,6 +17,7 @@ from ..harness import Harness
 class Failure:
     task_id: str
     description: str
+    trace: str = ""  # excerpt of why it failed (verifier output + agent trajectory)
 
 
 @dataclass
@@ -34,7 +35,7 @@ def run_practice(
 ) -> RunReport:
     scores = benchmark.run(harness, task_ids, run_idx=0)
     failures = [
-        Failure(tid, benchmark.describe(tid))
+        Failure(tid, benchmark.describe(tid), trace=benchmark.last_trace(tid))
         for tid, s in scores.items()
         if s < 1.0
     ]

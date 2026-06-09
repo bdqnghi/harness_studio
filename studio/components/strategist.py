@@ -51,8 +51,10 @@ def diversification_hints(diagnosis: list[dict], n: int) -> list[str]:
     hints = []
     if blamed:
         hints.append(f"Fix the root cause directly by editing the blamed part(s): {', '.join(blamed)}.")
-    hints.append("Address the failures by clarifying the instructions (add an explicit rule or example).")
-    hints.append("Address the failures in the tool code or by adding a guard/middleware safeguard.")
+    hints.append("Add a missing capability: create a new tool (e.g. file read/write/edit, "
+                 "search, or a task-specific helper) and register it in code_agent.yaml.")
+    hints.append("Address the failures by clarifying the instructions (add an explicit rule, "
+                 "workflow, or worked example) or by adding planning/output-management middleware.")
     hints.append("Make a different, minimal coordinated change than the obvious one.")
     # de-dup, pad to n
     seen, out = set(), []
