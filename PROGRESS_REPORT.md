@@ -1,6 +1,6 @@
 # Progress Report — harness_studio vs AHE on Terminal-Bench 2
 
-**Branch:** `tb2-nexau-headtohead` · **Status:** method built/validated/strengthened; a *valid* head-to-head verdict is **pending a healthy eval box** (local Docker died from disk exhaustion).
+**Branch:** `main` (all work merged; the `tb2-nexau-headtohead` feature branch was deleted). · **Status:** method built/validated/strengthened and committed; one side of the head-to-head is **validly measured** (ours/baseline = 0.667 on the held-out 3), the AHE held-out number was **not captured** before the run was stopped — so **no final ours-vs-AHE verdict yet**.
 
 ---
 
@@ -9,8 +9,9 @@
 - We **wired harness_studio to optimize AHE's exact input harness** (`code_agent_simple`, a bare nexau agent) on Terminal-Bench 2, scored by the **identical** `harbor run --agent nexau` path with the **same frozen actor** (gpt-5.4). Calibrated end-to-end: `fix-git` = 1.0 in 2.4 min.
 - We **gave our optimizer AHE-equivalent freedom** (it can now *add* tools/middleware/skills, not just edit existing files) and **strengthened** it (failure-trace feeding to the Diagnoser; capability-add hints).
 - A **small-scale head-to-head ran** (7 tasks, 3 held-out). Both optimizers **independently converged on the same edit — adding file tools.** Ours **gated** it (didn't help the judging tasks → rejected → held baseline); AHE **committed** it blind (still 0/4 on the pool).
-- **No valid pass-rate verdict yet.** A first held-out scoring was corrupted by transient eval-box degradation (under concurrent container load the disk-pressured box timed out — `fix-git` measured 0.0 vs its proven 1.0). The box then **recovered** (a single-task probe scored `fix-git` 1.0 in 1.9 min), so a clean **one-task-at-a-time (`n=1`) re-score is now in progress**; results pending. We refuse to report the corrupted numbers as a win — they aren't one.
-- **Next:** finish the clean `n=1` local re-score for a preliminary signal, then run the full, diverse TB 2.0 head-to-head on an adequately-resourced machine (turnkey via this branch), where the optimizer's edge can actually show.
+- **Partial verdict (valid):** on the locked held-out 3, **ours = baseline = 0.667** (`fix-git`=1.0, `sqlite-db-truncate`=1.0, `overfull-hbox`=0; clean `n=1` re-score, env healthy). "Ours = baseline" because our gate **accepted 0 edits** (it rejected the file-tools edit that didn't help — the never-regress discipline).
+- **AHE held-out number: NOT captured.** A first scoring was corrupted by transient eval-box degradation (concurrent-load timeouts on a disk-pressured box — `fix-git` 1.0→0.0); the box then recovered and a clean `n=1` AHE re-score was running but **was stopped before completing** (per request to wrap up). So there is **no valid AHE held-out pass-rate**, hence **no final head-to-head verdict**. We refuse to report the corrupted 0/3 as a win — it isn't one.
+- **Next:** finish the (one-command) clean AHE held-out re-score for a preliminary signal, then run the full, diverse TB 2.0 head-to-head on an adequately-resourced machine, where the optimizer's edge can actually show.
 
 ---
 
@@ -69,7 +70,9 @@ Decide whether harness_studio's "stochastic harness optimization" is good enough
 | Strengthening (trace-feeding, capability hints, disk-fix) | ✅ committed |
 | Calibration + full-loop smoke on real TB2 | ✅ |
 | 88 unit tests | ✅ green |
-| **Valid ours-vs-AHE held-out verdict** | ⏳ **in progress** — box recovered (single-task `fix-git`=1.0/1.9 min); clean `n=1` re-score running |
+| ours (= baseline) held-out 3 | ✅ **0.667** valid (`fix-git`✓ `sqlite-db-truncate`✓ `overfull-hbox`✗) |
+| AHE-evolved held-out 3 | ❌ not captured — clean re-score stopped before completing |
+| **Final ours-vs-AHE verdict** | ⏳ **incomplete** — needs the AHE held-out number (one command on a healthy box) |
 
 ## 5. Next plan
 
@@ -104,6 +107,13 @@ Requirements: Docker with ≥24 GB RAM **and ample free disk**, gpt-5.4 creds, t
 
 ## 6. Resume / artifacts
 
-- **Branch:** `tb2-nexau-headtohead` (pushed). 18 files, ~1.3k lines: `studio/benchmark/nexau.py`, the dir-aware part map (`studio/parts.py`, `studio/components/shell.py`), trace-feeding (`base.py`/`instrument.py`/`runner.py`/`diagnoser.py`/`nexau.py`), `examples/tb2_*`, tests.
+- **Branch:** `main` (everything merged; feature branch deleted — single branch). ~20 files, ~1.3k lines: `studio/benchmark/nexau.py`, the dir-aware part map (`studio/parts.py`, `studio/components/shell.py`), trace-feeding (`base.py`/`instrument.py`/`runner.py`/`diagnoser.py`/`nexau.py`), `examples/tb2_*`, tests. 88 unit tests green.
 - **Runbook:** `examples/TB2_HEADTOHEAD.md`. **Memory:** `tb2-headtohead-experiment`, `tb2-feasibility-facts`.
-- **To finish locally:** free disk → `python examples/tb2_score.py <baseline> --label baseline … && python examples/tb2_score.py <ahe_workspace> --label ahe … && python examples/tb2_compare.py`.
+- **To finish the local preliminary verdict (one gentle command — env is healthy):**
+  ```bash
+  export TB2_TASKS="fix-git,cobol-modernization,overfull-hbox,sqlite-db-truncate,regex-log,git-leak-recovery,extract-elf" TB2_SEED=0 TB2_FINAL=3 TB2_AUDIT=1 TB2_JUDGING=2
+  AHE_WS="$AHE_DIR/experiments/2026-06-09__11-44-30__tb2-h2h/workspace"   # AHE-evolved harness (adds file tools + workflow guidance)
+  python examples/tb2_score.py "$AHE_WS" --label ahe --timeout-multiplier 3 --n-concurrent 1 --out /tmp/tb2_ahe.json
+  python examples/tb2_compare.py     # baseline=ours 0.667  vs  ahe=?  -> verdict
+  ```
+  Interpretation: AHE-best `< 0.667` ⇒ ours wins (never-regress — AHE's blind commit hurt an easy task); `= 0.667` ⇒ tie; `> 0.667` ⇒ AHE's edit generalized (tweak ours and re-run). A decisive "we optimized better" win needs the full diverse TB 2.0 (§5.2).
