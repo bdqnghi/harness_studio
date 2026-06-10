@@ -110,11 +110,12 @@ class NexauBenchmark(Benchmark):
         ahe_dir: Path = DEFAULT_AHE_DIR,
         task_cache: Path = DEFAULT_TASK_CACHE,
         tasks: list[str] | None = None,
-        model: str = "gpt-5.4",
+        model: str = "gemini-3.5-flash",
         env: str = "docker",
         n_concurrent: int = 4,
         k: int = 1,
         timeout_multiplier: float = 3.0,
+        force_build: bool = True,
         harbor_bin: Path | None = None,
         agent_config_filename: str = AGENT_CONFIG_FILENAME,
     ) -> None:
@@ -127,6 +128,10 @@ class NexauBenchmark(Benchmark):
         self.n_concurrent = n_concurrent
         self.k = k
         self.timeout_multiplier = timeout_multiplier
+        # Build the task image from its Dockerfile (arm64-native on this box; the
+        # published docker_images can be x86-only) so the nexau runtime install
+        # has apt + a working base.
+        self.force_build = force_build
         self.agent_config_filename = agent_config_filename
         # Faithful to evolve.py: use AHE's pinned harbor (it registers `nexau`).
         self.harbor_bin = Path(harbor_bin) if harbor_bin else self.ahe_dir / ".venv" / "bin" / "harbor"
@@ -181,6 +186,8 @@ class NexauBenchmark(Benchmark):
             "--jobs-dir", str(jobs_dir),
             "-p", str(dataset_dir),
         ]
+        if self.force_build:
+            cmd += ["--force-build"]
         if self.k > 1:
             cmd += ["-k", str(self.k)]
         if self.timeout_multiplier and self.timeout_multiplier != 1.0:
@@ -190,6 +197,9 @@ class NexauBenchmark(Benchmark):
     def _subprocess_env(self) -> dict[str, str]:
         sub_env = os.environ.copy()
         sub_env.update(load_llm_env(self.ahe_dir, self.model))
+        # Docker path: nexau is installed into the task container at runtime
+        # (the pre-baked /opt/nexau-venv is E2B-only). Honor an explicit override.
+        sub_env.setdefault("USE_BP_E2B", "False")
         venv_bin = str(self.ahe_dir / ".venv" / "bin")
         sub_env["PATH"] = venv_bin + os.pathsep + sub_env.get("PATH", "")
         return sub_env

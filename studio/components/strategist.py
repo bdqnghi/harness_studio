@@ -42,6 +42,23 @@ class Strategy:
 
 # --- diversification: distinct angles for the competing strategies ---
 
+_INFRA_KEYS = (
+    "api error", "rate limit", "ratelimit", "429", "5xx", "timeout", "timed out",
+    "transient", "crash", "failed to start", "initializ", "infrastructure",
+    "no agent responses", "empty trajectory", "connection",
+)
+
+
+def _looks_infrastructural(diagnosis: list[dict]) -> bool:
+    """Do the failures look like transient API/infra errors (rate limits,
+    timeouts, init crashes) rather than reasoning bugs?"""
+    text = " ".join(
+        f"{d.get('root_cause','')} {d.get('description','')} {d.get('blamed_part','')}"
+        for d in diagnosis
+    ).lower()
+    return any(k in text for k in _INFRA_KEYS)
+
+
 def diversification_hints(diagnosis: list[dict], n: int) -> list[str]:
     blamed = []
     for d in diagnosis:
@@ -49,6 +66,16 @@ def diversification_hints(diagnosis: list[dict], n: int) -> list[str]:
         if part and part != "unclear" and part not in blamed:
             blamed.append(part)
     hints = []
+    # When the diagnosis points at transient infrastructure/API failures, the
+    # highest-leverage harness fix is robustness MIDDLEWARE — try it first.
+    if _looks_infrastructural(diagnosis):
+        hints.append(
+            "The failures look like transient infrastructure/API errors (rate limits, "
+            "429/5xx, timeouts, or the agent crashing at startup). Add robustness "
+            "MIDDLEWARE and register it in code_agent.yaml: retry-with-exponential-backoff "
+            "on transient LLM/API errors, and cap or stream oversized tool outputs so a "
+            "single large result can't crash the turn. Make the agent resilient, not smarter."
+        )
     if blamed:
         hints.append(f"Fix the root cause directly by editing the blamed part(s): {', '.join(blamed)}.")
     hints.append("Add a missing capability: create a new tool (e.g. file read/write/edit, "

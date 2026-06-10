@@ -28,6 +28,7 @@ def main() -> None:
     ap.add_argument("harness_dir", type=Path)
     ap.add_argument("--label", default="harness")
     ap.add_argument("--tasks", type=lambda s: [t.strip() for t in s.split(",") if t.strip()], default=None)
+    ap.add_argument("--model", default="gemini-3.5-flash", help="actor model (must match the run for fairness)")
     ap.add_argument("--k", type=int, default=1, help="rollouts/task (k>1 lowers binary variance)")
     ap.add_argument("--n-concurrent", type=int, default=4)
     ap.add_argument("--timeout-multiplier", type=float, default=3.0)
@@ -37,7 +38,7 @@ def main() -> None:
     tasks = args.tasks or final_tasks()
     harness = Harness(args.harness_dir)
     bench = NexauBenchmark(
-        real=True, tasks=tasks, k=args.k,
+        real=True, tasks=tasks, k=args.k, model=args.model,
         n_concurrent=args.n_concurrent, timeout_multiplier=args.timeout_multiplier,
     )
     print(f"[{args.label}] scoring {harness.root} on {len(tasks)} tasks: {tasks}", flush=True)

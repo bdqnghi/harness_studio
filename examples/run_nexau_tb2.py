@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples.tb2_config import PILES, SEED, TASKS  # noqa: E402
 from studio.benchmark.nexau import DEFAULT_AHE_DIR, NexauBenchmark  # noqa: E402
-from studio.components.splitter import split_tasks  # noqa: E402
+from studio.components.splitter import TaskSplit, split_tasks  # noqa: E402
 from studio.config import Config, EditConfig, LoopConfig, PileConfig  # noqa: E402
 from studio.harness import Harness  # noqa: E402
 from studio.parts import PartMap, PartType  # noqa: E402
@@ -80,8 +80,11 @@ def build(args) -> tuple[Harness, NexauBenchmark, Config, object]:
         k=args.k,
         timeout_multiplier=args.timeout_multiplier,
     )
+    # practice = the per-round mini-batch SIZE (sampled fresh from the practice
+    # pool each round, à la SkillOpt). Default: the whole pool (no sub-sampling).
+    pool_remainder = max(1, len(args.tasks) - args.final - args.audit - args.judging)
     piles = PileConfig(
-        practice=max(1, len(args.tasks) - args.final - args.audit - args.judging),
+        practice=args.practice_size if args.practice_size else pool_remainder,
         judging=args.judging,
         audit=args.audit,
         final_exam=args.final,
@@ -100,12 +103,20 @@ def build(args) -> tuple[Harness, NexauBenchmark, Config, object]:
     )
     backend = None
     if not args.dry_run:
-        from studio.backends.claude_cli import ClaudeCLIBackend
+        kw = {"log_dir": Path(args.workspace) / "proposer-logs"}
+        if args.proposer_backend == "gemini":
+            from studio.backends.gemini import GeminiBackend
 
-        kw = {"log_dir": Path(args.workspace) / "claude-logs"}
-        if args.proposer_model:
-            kw["tier_a_model"] = args.proposer_model
-        backend = ClaudeCLIBackend(**kw)
+            if args.proposer_model:
+                kw["tier_a_model"] = args.proposer_model
+                kw["tier_b_model"] = args.proposer_model
+            backend = GeminiBackend(**kw)
+        else:
+            from studio.backends.claude_cli import ClaudeCLIBackend
+
+            if args.proposer_model:
+                kw["tier_a_model"] = args.proposer_model
+            backend = ClaudeCLIBackend(**kw)
     return src, bench, cfg, backend
 
 
@@ -116,8 +127,10 @@ def main() -> None:
                     default=DEFAULT_TASKS, help="comma-separated TB2 task names")
     ap.add_argument("--ahe-dir", type=Path, default=DEFAULT_AHE_DIR)
     ap.add_argument("--workspace", type=Path, default=None)
-    ap.add_argument("--model", default="gpt-5.4", help="actor model (must match AHE for fairness)")
-    ap.add_argument("--proposer-model", default=None, help="Tier-A Strategist model (default: backend default)")
+    ap.add_argument("--model", default="gemini-3.5-flash", help="actor model (must match AHE for fairness)")
+    ap.add_argument("--proposer-backend", choices=["gemini", "claude"], default="gemini",
+                    help="programmatic Gemini agent (default) or the legacy claude CLI")
+    ap.add_argument("--proposer-model", default=None, help="proposer model (default: backend default, e.g. gemini-3.5-flash)")
     ap.add_argument("--env", default="docker")
     ap.add_argument("--n-concurrent", type=int, default=4)
     ap.add_argument("--k", type=int, default=1, help="rollouts per task per harbor call")
@@ -131,6 +144,12 @@ def main() -> None:
     ap.add_argument("--judging", type=int, default=PILES.judging)
     ap.add_argument("--budget", type=int, default=4, help="max changed files per part per strategy")
     ap.add_argument("--seed", type=int, default=SEED)
+    ap.add_argument("--practice-size", type=int, default=None,
+                    help="SkillOpt-style mini-batch: # practice tasks sampled fresh per round (default: whole pool)")
+    ap.add_argument("--pool-signal", dest="pool_signal", action="store_true", default=True,
+                    help="(default) find failures + gate on the full opt pool, like AHE")
+    ap.add_argument("--no-pool-signal", dest="pool_signal", action="store_false",
+                    help="use the disjoint practice/judging split instead")
     args = ap.parse_args()
 
     if args.workspace is None:
@@ -140,6 +159,15 @@ def main() -> None:
 
     # Show the split + the exact harbor command (free).
     split = split_tasks(args.tasks, cfg.piles, seed=cfg.seed)
+    # Pool-signal mode (default): the optimizer finds failures AND the gate
+    # validates on the FULL opt pool (all non-held-out tasks), mirroring AHE's
+    # full-pool evaluation. Without this, the practice pile (the shuffle
+    # remainder) often misses the reliably-failing tasks, so the Strategist is
+    # never triggered. final_exam stays the locked, honest held-out.
+    if args.pool_signal:
+        opt = sorted(set(split.practice) | set(split.judging) | set(split.audit))
+        split = TaskSplit(practice=opt, judging=opt, audit=opt, final_exam=split.final_exam)
+        cfg.piles.practice = len(opt)
     print("=== harness_studio vs AHE: same NexAU harness on TB2 ===")
     print(f"input harness : {CODE_AGENT_SIMPLE}")
     print(f"actor model   : {args.model} (env={args.env}, k={args.k}, timeout x{args.timeout_multiplier})")
@@ -172,7 +200,7 @@ def main() -> None:
     print(f"\nworkspace: {args.workspace}\n--- running optimizer (this spends real compute) ---")
     orch = Orchestrator(
         workspace=args.workspace, source_harness=src, benchmark=bench,
-        backend=backend, config=cfg, part_map=nexau_part_map(),
+        backend=backend, config=cfg, part_map=nexau_part_map(), split=split,
     )
     result = orch.run()
     best_dir = orch.state.root / "best"
