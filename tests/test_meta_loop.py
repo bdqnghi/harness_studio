@@ -1,10 +1,12 @@
 """Integration test for the two-speed meta-loop (M3).
 
-We plant a plateau: the proposer keeps making a no-help edit and the gate keeps
-rejecting it. Only after the Meta-agent writes a *pivot directive* into the
-family map (the one mechanism edit at the segment boundary) does the proposer
-switch to the fix that actually helps — and the gate accepts it. This is the
-AEVO signature: improvement that a fixed-rule search could not have produced.
+We plant a plateau: the proposer keeps making a *regressing* edit and the gate
+keeps rejecting it. (Under do-no-harm a merely-neutral edit would be accepted,
+so the plateau is carried by a real regression.) Only after the Meta-agent writes
+a *pivot directive* into the family map (the one mechanism edit at the segment
+boundary) does the proposer switch to the fix that actually helps — and the gate
+accepts it. This is the AEVO signature: improvement that a fixed-rule search
+could not have produced.
 """
 
 from pathlib import Path
@@ -34,7 +36,7 @@ def plateau_or_pivot(root: Path, instruction: str) -> None:
     if PIVOT_DIRECTIVE in instruction and "BUG" in tools:
         toy_fixes.fix_reverse(root)       # the helpful edit
     else:
-        toy_fixes.enable_bogus(root)      # a no-help edit -> gate rejects
+        toy_fixes.regress_echo(root)      # a regressing edit -> gate rejects
 
 
 def meta_pivot(root: Path) -> None:

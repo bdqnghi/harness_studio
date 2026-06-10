@@ -21,11 +21,13 @@ SPLIT = TaskSplit(
     practice=[f"{f}-{i}" for f in FAMILIES for i in (6, 7, 8, 9, 10, 11)],
 )
 
-# Per round: [strategy_0 (loses), strategy_1 (wins)].
+# Per round: [strategy_0 (loses), strategy_1 (wins)]. Under do-no-harm the loser
+# must *regress* (a neutral edit would now be accepted), so s0 is always a
+# regression or a structural break.
 STRATEGIST_ACTIONS = [
-    toy_fixes.enable_bogus, toy_fixes.enable_upper,   # round 1: gate rejects s0 (no help) -> s1
+    toy_fixes.regress_echo, toy_fixes.enable_upper,   # round 1: gate rejects s0 (regression) -> s1
     toy_fixes.break_boot, toy_fixes.fix_reverse,      # round 2: structural skips s0 -> s1
-    toy_fixes.regress_echo, toy_fixes.fix_add_full,   # round 3: gate rejects s0 (regress) -> s1
+    toy_fixes.regress_echo, toy_fixes.fix_add_full,   # round 3: gate rejects s0 (regression) -> s1
 ]
 ROUNDS = 3
 

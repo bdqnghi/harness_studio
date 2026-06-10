@@ -22,12 +22,16 @@ def test_accepts_clear_improvement(tmp_path):
     assert d.accept and d.gain > 0
 
 
-def test_rejects_no_change(tmp_path):
+def test_neutral_edit_accepted_do_no_harm(tmp_path):
+    # Do-no-harm: an edit that does not move the judging score (gain == 0) is
+    # KEPT, not rejected — that is the whole point. Latent held-out value the
+    # pool can't see is allowed to accumulate (AHE captured it via blind-commit).
     bench = ToyBenchmark(per_family=4, noise_per_mille=0)
     old = _harness(tmp_path, "old")
-    new = _harness(tmp_path, "new")  # identical
-    d = Gate(bench, JUDGING, wobble=0.0).evaluate(old, new)
-    assert not d.accept and d.gain == 0
+    new = _harness(tmp_path, "new")  # identical -> gain 0
+    gate = Gate(bench, JUDGING, wobble=0.0)
+    assert gate.evaluate(old, new).accept and not gate.evaluate(old, new).regressed
+    assert gate.evaluate(old, new, additive=True).accept       # both paths accept
 
 
 def test_rejects_and_flags_regression(tmp_path):
@@ -38,30 +42,39 @@ def test_rejects_and_flags_regression(tmp_path):
     assert not d.accept and d.regressed and d.gain < 0
 
 
-def test_wobble_band_blocks_tiny_gain(tmp_path):
-    # A real improvement smaller than the wobble must not auto-accept; with no
-    # injected noise the borderline re-runs confirm the positive gain -> accept.
+def test_positive_gain_accepts_without_borderline(tmp_path):
+    # Under do-no-harm any gain >= 0 accepts immediately; the borderline branch
+    # is reserved for slightly-NEGATIVE gains, so a positive gain never triggers
+    # the extra re-runs (runs_used stays 1).
     bench = ToyBenchmark(per_family=4, noise_per_mille=0)
     old = _harness(tmp_path, "old")
     new = _harness(tmp_path, "new", toy_fixes.enable_upper)
-    # Set wobble above the true gain to force the borderline branch.
     gate = Gate(bench, JUDGING, wobble=1.0, borderline_extra_runs=3)
     d = gate.evaluate(old, new)
-    assert d.borderline and d.accept and d.runs_used == 4
+    assert d.accept and not d.borderline and d.runs_used == 1
 
 
-# --- do-no-harm acceptance for additive edits ----------------------------------
+def test_behavioral_borderline_small_regression(tmp_path):
+    # A small regression inside the wobble band is borderline for a behavioral
+    # edit: re-run the contested tasks; with no injected noise the averaged gain
+    # stays negative, so it is rejected (behavioral needs avg >= 0).
+    bench = ToyBenchmark(per_family=4, noise_per_mille=0)
+    old = _harness(tmp_path, "old")
+    new = _harness(tmp_path, "new", toy_fixes.regress_echo)  # gain -0.25
+    gate = Gate(bench, JUDGING, wobble=1.0, borderline_extra_runs=3)
+    d = gate.evaluate(old, new)  # behavioral
+    assert d.borderline and not d.accept and d.runs_used == 4
+
+
+# --- the additive nuance (wider borderline tolerance) --------------------------
 
 def test_additive_accepts_zero_gain(tmp_path):
-    # A strictly additive edit that does not move the (capability-limited) pool
-    # score is accepted under do-no-harm, whereas the behavioral path rejects it.
+    # A strictly additive edit at gain == 0 is accepted under do-no-harm.
     bench = ToyBenchmark(per_family=4, noise_per_mille=0)
     old = _harness(tmp_path, "old")
     new = _harness(tmp_path, "new")  # identical -> gain 0
-    gate = Gate(bench, JUDGING, wobble=0.0)
-    assert not gate.evaluate(old, new).accept                 # behavioral rejects
-    d = gate.evaluate(old, new, additive=True)
-    assert d.accept and d.gain == 0 and not d.regressed       # additive accepts
+    d = Gate(bench, JUDGING, wobble=0.0).evaluate(old, new, additive=True)
+    assert d.accept and d.gain == 0 and not d.regressed
 
 
 def test_additive_rejects_real_regression(tmp_path):
