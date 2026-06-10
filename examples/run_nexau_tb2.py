@@ -156,6 +156,10 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--practice-size", type=int, default=None,
                     help="SkillOpt-style mini-batch: # practice tasks sampled fresh per round (default: whole pool)")
+    ap.add_argument("--judging-tasks", type=lambda s: [t.strip() for t in s.split(",") if t.strip()],
+                    default=None, help="explicit gate judging set (subset of --tasks); overrides the split")
+    ap.add_argument("--audit-tasks", type=lambda s: [t.strip() for t in s.split(",") if t.strip()],
+                    default=None, help="explicit audit set (used with --judging-tasks)")
     ap.add_argument("--pool-signal", dest="pool_signal", action="store_true", default=True,
                     help="(default) find failures + gate on the full opt pool, like AHE")
     ap.add_argument("--no-pool-signal", dest="pool_signal", action="store_false",
@@ -174,7 +178,20 @@ def main() -> None:
     # full-pool evaluation. Without this, the practice pile (the shuffle
     # remainder) often misses the reliably-failing tasks, so the Strategist is
     # never triggered. final_exam stays the locked, honest held-out.
-    if args.pool_signal:
+    if args.judging_tasks:
+        # Explicit-split mode: pin the gate's judging set (e.g. the lightest,
+        # fastest opt tasks) so no pathologically-slow task gates every round.
+        # Selection is by eval cost, never by held-out impact, so it speeds the
+        # inner loop without touching the held-out comparison. Remaining pool
+        # tasks become audit (given) + practice (the rest, sampled per round).
+        jt = [t for t in args.judging_tasks if t in args.tasks]
+        at = [t for t in (args.audit_tasks or []) if t in args.tasks and t not in jt]
+        practice = [t for t in args.tasks if t not in jt and t not in at]
+        split = TaskSplit(practice=practice, judging=jt, audit=at, final_exam=[])
+        cfg.piles.judging, cfg.piles.audit, cfg.piles.final_exam = len(jt), len(at), 0
+        if not args.practice_size:
+            cfg.piles.practice = len(practice)
+    elif args.pool_signal:
         opt = sorted(set(split.practice) | set(split.judging) | set(split.audit))
         split = TaskSplit(practice=opt, judging=opt, audit=opt, final_exam=split.final_exam)
         cfg.piles.practice = len(opt)
