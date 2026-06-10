@@ -104,10 +104,19 @@ def build(args) -> tuple[Harness, NexauBenchmark, Config, object]:
     backend = None
     if not args.dry_run:
         kw = {"log_dir": Path(args.workspace) / "proposer-logs"}
-        if args.proposer_backend == "gemini":
+        if args.proposer_backend in ("gemini", "openai"):
             from studio.backends.gemini import GeminiBackend
 
-            if args.proposer_model:
+            if args.proposer_backend == "openai":
+                # Same OpenAI SDK, pointed at api.openai.com on the *separate*
+                # OpenAI quota — lets an OpenAI lane run truly parallel to a
+                # Gemini lane without contending for Gemini's rate limit.
+                kw["api_style"] = "openai"
+                kw["base_url"] = "https://api.openai.com/v1"
+                model = args.proposer_model or "gpt-5.4"
+                kw["tier_a_model"] = model
+                kw["tier_b_model"] = model
+            elif args.proposer_model:
                 kw["tier_a_model"] = args.proposer_model
                 kw["tier_b_model"] = args.proposer_model
             backend = GeminiBackend(**kw)
@@ -128,8 +137,9 @@ def main() -> None:
     ap.add_argument("--ahe-dir", type=Path, default=DEFAULT_AHE_DIR)
     ap.add_argument("--workspace", type=Path, default=None)
     ap.add_argument("--model", default="gemini-3.5-flash", help="actor model (must match AHE for fairness)")
-    ap.add_argument("--proposer-backend", choices=["gemini", "claude"], default="gemini",
-                    help="programmatic Gemini agent (default) or the legacy claude CLI")
+    ap.add_argument("--proposer-backend", choices=["gemini", "openai", "claude"], default="gemini",
+                    help="programmatic Gemini agent (default), OpenAI gpt-5.x on the "
+                         "separate OpenAI quota, or the legacy claude CLI")
     ap.add_argument("--proposer-model", default=None, help="proposer model (default: backend default, e.g. gemini-3.5-flash)")
     ap.add_argument("--env", default="docker")
     ap.add_argument("--n-concurrent", type=int, default=4)

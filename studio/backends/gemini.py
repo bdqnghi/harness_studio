@@ -173,6 +173,7 @@ class GeminiBackend(Backend):
         tier_b_model: str = DEFAULT_TIER_B_MODEL,
         base_url: str = DEFAULT_BASE_URL,
         api_key: str | None = None,
+        api_style: str = "gemini",
         max_turns: int = DEFAULT_MAX_TURNS,
         max_retries: int = 5,
         log_dir: Path | None = None,
@@ -182,6 +183,13 @@ class GeminiBackend(Backend):
         self.tier_b_model = tier_b_model
         self.max_turns = max_turns
         self.max_retries = max_retries
+        # OpenAI reasoning models (gpt-5.x) reject ``max_tokens`` and want
+        # ``max_completion_tokens``; the Gemini OpenAI-compat endpoint takes
+        # ``max_tokens``. Same OpenAI SDK, one parameter name differs.
+        self.api_style = api_style
+        self._tokens_param = (
+            "max_completion_tokens" if api_style == "openai" else "max_tokens"
+        )
         self.log_dir = Path(log_dir) if log_dir else None
         if self.log_dir:
             self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -193,9 +201,10 @@ class GeminiBackend(Backend):
         else:
             from openai import OpenAI
 
-            key = api_key or os.environ.get("GEMINI_API_KEY")
+            env_key = "OPENAI_API_KEY" if api_style == "openai" else "GEMINI_API_KEY"
+            key = api_key or os.environ.get(env_key)
             if not key:
-                raise GeminiBackendError("GEMINI_API_KEY is not set")
+                raise GeminiBackendError(f"{env_key} is not set")
             self._client = OpenAI(api_key=key, base_url=base_url)
 
     # --- usage / cost accounting (thread-safe) ---
@@ -232,7 +241,8 @@ class GeminiBackend(Backend):
         last = None
         for attempt in range(self.max_retries):
             try:
-                kwargs = dict(model=model, messages=messages, max_tokens=max_tokens)
+                kwargs = {"model": model, "messages": messages,
+                          self._tokens_param: max_tokens}
                 if tools:
                     kwargs["tools"] = tools
                     kwargs["tool_choice"] = "auto"
