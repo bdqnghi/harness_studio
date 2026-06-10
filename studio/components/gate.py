@@ -12,6 +12,25 @@ keep/reject with a three-way, noise-aware rule:
 ``gain`` is the mean over judging tasks of the paired difference
 ``score(new) - score(old)``.
 
+**Do-no-harm acceptance for additive edits** (``additive=True``).
+A behavioral edit (it rewrites the system prompt / INSTRUCTIONS) *replaces*
+existing guidance, so the burden of proof is on it: it must measurably improve
+the judging set or we reject it. But a *strictly additive* edit — it adds a new
+tool, a middleware, a skill, a memory file without touching the prose the agent
+already follows — can only help on inputs that exercise the new surface, and our
+judging pool may simply not contain those inputs. Holding additive edits to
+"must improve a capability-limited pool" throws away latent value that shows up
+on a broader held-out set (this is exactly how AHE's blind-commit beat our
+never-regress gate). So for additive edits we flip the burden: accept unless the
+edit *regresses* beyond the noise floor.
+
+  * gain >= 0             -> accept (do no harm; pool just doesn't exercise it)
+  * -wobble <= gain < 0   -> borderline -> re-run contested, accept iff averaged
+                              gain is within noise (>= a small negative tolerance)
+  * gain < -wobble        -> reject (a genuine regression — additive or not)
+
+The behavioral path (``additive=False``, the default) is unchanged.
+
 Protection (PRD §3): the gate is constructed with a benchmark only — never a
 Backend. No AI helper can reach the evaluator or write scores.
 """
@@ -54,11 +73,24 @@ class Gate:
         self.wobble = max(0.0, wobble)
         self.extra = max(0, borderline_extra_runs)
 
-    def evaluate(self, old: Harness, new: Harness) -> GateDecision:
+    def evaluate(self, old: Harness, new: Harness, *, additive: bool = False) -> GateDecision:
         old_s = self.benchmark.run(old, self.judging, run_idx=0)
         new_s = self.benchmark.run(new, self.judging, run_idx=0)
         gain = _mean(new_s) - _mean(old_s)
         old_score, new_score = _mean(old_s), _mean(new_s)
+
+        if additive:
+            # Flip the burden of proof: accept unless it regresses past noise.
+            if gain >= 0:
+                return GateDecision(True, gain, old_score, new_score,
+                                    reason="additive, does no harm (gain >= 0)")
+            if gain < -self.wobble:
+                return GateDecision(False, gain, old_score, new_score,
+                                    regressed=True,
+                                    reason="additive but regresses past wobble")
+            # -wobble <= gain < 0: borderline, average out the noise.
+            return self._resolve_borderline(old, new, old_s, new_s, gain,
+                                            additive=True)
 
         if gain > self.wobble:
             return GateDecision(True, gain, old_score, new_score,
@@ -69,7 +101,8 @@ class Gate:
                                 reason="not better (gain <= 0)")
         return self._resolve_borderline(old, new, old_s, new_s, gain)
 
-    def _resolve_borderline(self, old, new, old_s, new_s, gain) -> GateDecision:
+    def _resolve_borderline(self, old, new, old_s, new_s, gain,
+                            *, additive: bool = False) -> GateDecision:
         """Average the contested tasks over extra runs to see through the noise."""
         contested = [t for t in self.judging if old_s[t] != new_s[t]]
         old_acc = {t: [old_s[t]] for t in contested}
@@ -86,9 +119,18 @@ class Gate:
             for t in contested
         )
         avg_gain = diff / len(self.judging)
-        accept = avg_gain > 0
+        if additive:
+            # Do-no-harm: accept as long as the averaged result is not a real
+            # regression. A tiny residual negative within noise still passes.
+            tol = -self.wobble / 2
+            accept = avg_gain >= tol
+            reason = (f"additive borderline resolved: averaged gain "
+                      f"{avg_gain:+.4f} (tol {tol:+.4f})")
+        else:
+            accept = avg_gain > 0
+            reason = f"borderline resolved: averaged gain {avg_gain:+.4f}"
         return GateDecision(
             accept, avg_gain, _mean(old_s), _mean(new_s),
             regressed=avg_gain < 0, borderline=True, runs_used=1 + self.extra,
-            reason=f"borderline resolved: averaged gain {avg_gain:+.4f}",
+            reason=reason,
         )

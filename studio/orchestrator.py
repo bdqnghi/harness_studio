@@ -33,7 +33,7 @@ from .components.splitter import TaskSplit, sample_practice, split_tasks
 from .components.strategist import Strategy
 from .config import Config
 from .harness import Harness
-from .parts import PartMap
+from .parts import PartMap, PartType
 from .state import RoundOutcome, WorkspaceState
 
 
@@ -333,7 +333,16 @@ class Orchestrator:
                 if not res.ok or not res.changed_parts:
                     last_note = "repair violated shell invariants"
                     continue
-            decision = gate.evaluate(self.harness, s.candidate)
+            # An edit that rewrites the system prompt (INSTRUCTIONS) *replaces*
+            # guidance the agent already follows, so it must prove it improves
+            # the judging set. A strictly additive edit (new tool / middleware /
+            # skill / memory, prose untouched) can only help inputs that
+            # exercise the new surface — which a capability-limited pool may not
+            # contain — so we accept it under do-no-harm (reject only on a real
+            # regression). This is what lets us capture the latent held-out value
+            # AHE's blind-commit captures, without abandoning never-regress.
+            additive = PartType.INSTRUCTIONS not in s.changed_parts
+            decision = gate.evaluate(self.harness, s.candidate, additive=additive)
             if decision.accept:
                 self.harness = s.candidate.copy_to(self.state.harness_dir)
                 self.state.health.gate_rejections = 0
