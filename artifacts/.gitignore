@@ -1,0 +1,2 @@
+# harness snapshots are large/volatile; keep only the curated mini-swe source + patch
+harnesses/
