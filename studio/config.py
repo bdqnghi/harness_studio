@@ -56,6 +56,21 @@ class HealthConfig:
 
 
 @dataclass
+class EvalPlanConfig:
+    """Power-based, calibration-aware split tuning (splitter.choose_eval_plan)."""
+
+    adaptive: bool = False        # use choose_eval_plan instead of fixed piles
+    z: float = 1.96               # confidence for power sizing
+    delta_step: float = 0.12      # per-round effect the gate must resolve (coarse)
+    delta_final: float = 0.05     # effect the test/CV verdict must resolve
+    val_floor: int = 8
+    val_budget_cap: int = 16      # gate-size ceiling -> n_val ~constant across N
+    heavy_sec: float = 3600.0     # tasks at/above this stay out of the every-round gate
+    n_folds: int = 5
+    calibration_path: str = ""    # reuse a cached Calibration if set
+
+
+@dataclass
 class Config:
     seed: int = 0
     noise_per_mille: int = 0  # injected toy wobble; 0 for exact tests
@@ -65,6 +80,7 @@ class Config:
     loop: LoopConfig = field(default_factory=LoopConfig)
     edits: EditConfig = field(default_factory=EditConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
+    eval_plan: EvalPlanConfig = field(default_factory=EvalPlanConfig)
 
     # --- (de)serialization ---
 
