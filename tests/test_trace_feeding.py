@@ -4,6 +4,8 @@ AHE's trace/Agent-Debugger analysis. Must degrade gracefully (no trace -> "").""
 
 import json
 
+import pytest
+
 from studio.benchmark.base import Benchmark
 from studio.benchmark.nexau import NexauBenchmark
 from studio.components import diagnoser, runner
@@ -112,3 +114,27 @@ def test_run_executes_full_cleanup_path(tmp_path, monkeypatch):
     scores = bench.run(Harness(tmp_path / "h"), ["t1"], run_idx=0)
     assert scores == {"t1": 1.0}
     assert work_dirs and not work_dirs[0].exists()  # cleanup ran (no NameError)
+
+
+def test_run_raises_on_harbor_failure(tmp_path, monkeypatch):
+    from studio.benchmark.kira import BenchmarkExecutionError
+    from studio.harness import Harness
+
+    (tmp_path / "harbor").write_text("")
+    (tmp_path / "h").mkdir()
+    (tmp_path / "h" / "code_agent.yaml").write_text("name: x\n")
+    bench = NexauBenchmark(real=True, harbor_bin=tmp_path / "harbor")
+    monkeypatch.setattr(
+        bench, "_link_dataset",
+        lambda task_ids, dest: dest.mkdir(parents=True, exist_ok=True),
+    )
+    monkeypatch.setattr(bench, "_subprocess_env", lambda: {})
+
+    class Failed:
+        returncode = 2
+
+    monkeypatch.setattr(
+        "studio.benchmark.nexau.subprocess.run", lambda *a, **kw: Failed()
+    )
+    with pytest.raises(BenchmarkExecutionError, match="rc=2"):
+        bench.run(Harness(tmp_path / "h"), ["t1"], run_idx=0)

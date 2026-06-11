@@ -14,6 +14,12 @@ def test_compute_sigma2_bounds():
     assert compute_sigma2({}) == 0.25                            # empty -> conservative cap
 
 
+def test_compute_sigma2_corrects_finite_rollout_rates():
+    raw = compute_sigma2({"a": 0.2, "b": 0.8})
+    corrected = compute_sigma2({"a": 0.2, "b": 0.8}, k=3)
+    assert corrected > raw
+
+
 def test_calibrate_records_difficulty_and_sigma(tmp_path):
     bench = ToyBenchmark(per_family=4, noise_per_mille=0)
     base = build_toy_harness(tmp_path / "base")

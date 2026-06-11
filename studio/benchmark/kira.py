@@ -24,17 +24,18 @@ from .base import Benchmark
 PASS_THRESHOLD = 1.0
 
 
+class BenchmarkExecutionError(RuntimeError):
+    """The evaluator did not produce a complete, trustworthy batch."""
+
+
 def _reward_to_score(reward: float) -> float:
     return 1.0 if reward >= PASS_THRESHOLD else 0.0
 
 
-def parse_harbor_results(jobs_dir: Path, task_ids: list[str]) -> dict[str, float]:
-    """Map a harbor jobs directory to {task_id: score in [0,1]}.
-
-    Each task run writes ``<task>__<trial>/verifier/reward.txt`` (a float). A task
-    with multiple trials scores the mean of its trial passes. Tasks with no output
-    score 0.0 (a missing run is a failed run, not absent data).
-    """
+def parse_harbor_result_details(
+    jobs_dir: Path, task_ids: list[str]
+) -> tuple[dict[str, float], dict[str, int]]:
+    """Return per-task mean scores and valid-trial counts."""
     jobs_dir = Path(jobs_dir)
     trials: dict[str, list[float]] = {t: [] for t in task_ids}
     for reward_file in jobs_dir.rglob("verifier/reward.txt"):
@@ -48,7 +49,37 @@ def parse_harbor_results(jobs_dir: Path, task_ids: list[str]) -> dict[str, float
         except (ValueError, OSError):
             continue
         trials[task_id].append(_reward_to_score(reward))
-    return {t: (sum(v) / len(v) if v else 0.0) for t, v in trials.items()}
+    scores = {t: (sum(v) / len(v) if v else 0.0) for t, v in trials.items()}
+    counts = {t: len(v) for t, v in trials.items()}
+    return scores, counts
+
+
+def parse_harbor_results(jobs_dir: Path, task_ids: list[str]) -> dict[str, float]:
+    """Map a Harbor jobs directory to per-task mean scores.
+
+    This permissive parser is retained for offline inspection. Production
+    benchmark adapters use :func:`require_complete_harbor_results`.
+    """
+    return parse_harbor_result_details(jobs_dir, task_ids)[0]
+
+
+def require_complete_harbor_results(
+    jobs_dir: Path, task_ids: list[str], *, expected_trials: int
+) -> dict[str, float]:
+    """Reject missing trials instead of silently turning infrastructure loss into 0."""
+    scores, counts = parse_harbor_result_details(jobs_dir, task_ids)
+    incomplete = {
+        task_id: count
+        for task_id, count in counts.items()
+        if count < expected_trials
+    }
+    if incomplete:
+        detail = ", ".join(
+            f"{task_id}={count}/{expected_trials}"
+            for task_id, count in sorted(incomplete.items())
+        )
+        raise BenchmarkExecutionError(f"incomplete Harbor results: {detail}")
+    return scores
 
 
 class KiraBenchmark(Benchmark):

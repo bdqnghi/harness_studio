@@ -5,6 +5,7 @@ edit pre-listed files. Locks in studio/parts.py + studio/components/shell.py."""
 from studio.components import shell
 from studio.harness import Harness
 from studio.parts import PartMap, PartType
+from studio.benchmark.nexau import api_type_for
 
 
 def _harness(tmp_path):
@@ -64,3 +65,8 @@ def test_dir_part_respects_budget(tmp_path):
     res = shell.enforce(original, candidate, _dir_map(), budget_per_part=2)
     assert not res.ok
     assert res.violations and "tool_code" in res.violations[0]
+
+
+def test_nexau_provider_is_explicit_and_validated():
+    assert api_type_for("custom-name", "openai") == "openai_responses"
+    assert api_type_for("custom-name", "gemini") == "gemini_rest"

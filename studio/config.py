@@ -57,16 +57,23 @@ class HealthConfig:
 
 @dataclass
 class EvalPlanConfig:
-    """Power-based, calibration-aware split tuning (splitter.choose_eval_plan)."""
+    """Power-based, calibration-aware split tuning (splitter.choose_split)."""
 
-    adaptive: bool = False        # use choose_eval_plan instead of fixed piles
+    adaptive: bool = False        # use choose_split instead of fixed piles
+    round_size: int = 32          # tasks run per round (the SGD mini-batch)
     z: float = 1.96               # confidence for power sizing
-    delta_step: float = 0.12      # per-round effect the gate must resolve (coarse)
-    delta_final: float = 0.05     # effect the test/CV verdict must resolve
-    val_floor: int = 8
-    val_budget_cap: int = 16      # gate-size ceiling -> n_val ~constant across N
-    heavy_sec: float = 3600.0     # tasks at/above this stay out of the every-round gate
-    n_folds: int = 5
+    delta_round: float = 0.12     # per-round effect the gate must resolve (coarse)
+    val_floor: int = 8            # min stable gate (judging) size
+    reg_floor: int = 16           # min regression (do-no-harm) size
+    reg_cap: int = 32             # max regression size -> ~constant across N
+    pool_mult: int = 4            # held-in pool = pool_mult * round_size
+    pool_cap: int = 256           # held-in pool ceiling -> ~constant across N
+    test_floor: int = 25          # min locked-test size for a trustworthy verdict
+    test_budget_cap: int = 0      # >0: grade only a representative subsample of test
+    heavy_sec: float = 3600.0     # tasks at/above this go ONLY to the locked test
+    calibration_k: int = 3        # repeated held-in baseline rollouts for noise
+    opt_k: int = 1                # rollouts per gate check (cheap, per-round)
+    test_k: int = 3               # rollouts for the locked-test verdict (trustworthy)
     calibration_path: str = ""    # reuse a cached Calibration if set
 
 
@@ -89,6 +96,8 @@ class Config:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
+        eval_plan = dict(data.get("eval_plan", {}))
+        eval_plan.pop("delta_final", None)  # removed: actual detectable_final is reported
         return cls(
             seed=data.get("seed", 0),
             noise_per_mille=data.get("noise_per_mille", 0),
@@ -98,7 +107,7 @@ class Config:
             loop=LoopConfig(**data.get("loop", {})),
             edits=EditConfig(**data.get("edits", {})),
             health=HealthConfig(**data.get("health", {})),
-            eval_plan=EvalPlanConfig(**data.get("eval_plan", {})),
+            eval_plan=EvalPlanConfig(**eval_plan),
         )
 
     @classmethod

@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -105,14 +104,6 @@ TOOL_SCHEMAS = [
         }, "required": ["pattern"]},
     }},
     {"type": "function", "function": {
-        "name": "run_bash",
-        "description": "Run a shell command with cwd=workspace (e.g. to validate edits with python). Secrets are scrubbed from the env.",
-        "parameters": {"type": "object", "properties": {
-            "cmd": {"type": "string"},
-            "timeout": {"type": "integer", "description": "seconds (default 120)"},
-        }, "required": ["cmd"]},
-    }},
-    {"type": "function", "function": {
         "name": "complete_task",
         "description": "Call this when your edits are written and you are done. Provide a one-paragraph summary.",
         "parameters": {"type": "object", "properties": {
@@ -131,7 +122,6 @@ Rules:
 - Implement the requested strategy as the smallest coherent change that could plausibly fix the failing tasks.
 - Keep the harness valid and bootable: never break YAML/JSON/Python syntax. If you add a tool/middleware, register it where the harness expects.
 - Only edit files inside the workspace, and never edit any file listed as do-not-touch in the instruction.
-- You may use run_bash (cwd is the workspace) to sanity-check your edits, e.g. `python -c "import yaml,sys; yaml.safe_load(open('code_agent.yaml'))"`.
 - When your edits are written, call complete_task with a one-paragraph summary of what you changed and why. Do not call complete_task before writing your edits."""
 
 
@@ -380,8 +370,6 @@ class GeminiBackend(Backend):
             return self._list_dir(args, roots)
         if name == "grep":
             return self._grep(args, roots)
-        if name == "run_bash":
-            return self._run_bash(args, workspace)
         raise ToolError(f"unknown tool {name!r}")
 
     @staticmethod
@@ -459,16 +447,3 @@ class GeminiBackend(Backend):
             except OSError:
                 continue
         return "\n".join(hits) or "(no matches)"
-
-    def _run_bash(self, args, workspace) -> str:
-        cmd = args["cmd"]
-        timeout = min(int(args.get("timeout", 120)), 600)
-        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-               "HOME": os.environ.get("HOME", str(workspace)), "LANG": "C.UTF-8"}
-        try:
-            proc = subprocess.run(cmd, shell=True, cwd=str(workspace), env=env,
-                                  capture_output=True, text=True, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            return f"ERROR: command timed out after {timeout}s"
-        out = f"rc={proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}"
-        return _cap(out, MAX_TOOL_OUTPUT)

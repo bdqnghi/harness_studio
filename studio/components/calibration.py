@@ -1,17 +1,15 @@
 """Calibration: cheap per-task difficulty / noise / runtime to size eval splits.
 
-One pass of the *baseline* harness over the task set yields each task's pass rate
-``p_t`` (difficulty). ``sigma2 = mean_t p_t(1-p_t)`` is the per-task Bernoulli
-variance proxy that drives **power-based** validation sizing
-(``splitter.choose_eval_plan``). Per-task timeout (read from ``task.toml``) is a
-free runtime proxy used to keep slow tasks out of the every-round gate, and the
-``[metadata].difficulty`` field gives a cold-start stratification before any
-calibration run.
+Repeated runs of the *baseline* harness over a calibration set yield each task's
+pass rate ``p_t`` (difficulty). ``sigma2 = mean_t p_t(1-p_t)`` is the per-task
+Bernoulli variance proxy used to report the power of the chosen split. The main
+self-comparison driver freezes the split from metadata and a conservative prior,
+then calibrates only held-in tasks so future locked-test outcomes are never used
+during optimization.
 
-The baseline pass scores double as the optimizer's baseline reference (its
-"old harness" score), so calibration is not wasted compute — re-scoring the
-unchanged baseline at the same ``run_idx`` is a cache hit (see
-``benchmark/instrument.py``).
+Per-task timeout (read from ``task.toml``) is a free runtime proxy used to keep
+slow tasks out of the every-round gate, and ``[metadata].difficulty`` provides
+cold-start stratification without evaluating any task.
 """
 
 from __future__ import annotations
@@ -91,13 +89,18 @@ class Calibration:
         return cls.from_dict(json.loads(Path(path).read_text()))
 
 
-def compute_sigma2(p_by_task: dict[str, float], *, floor: float = SIGMA2_FLOOR,
-                   cap: float = SIGMA2_CAP) -> float:
+def compute_sigma2(
+    p_by_task: dict[str, float], *, k: int | None = None,
+    floor: float = SIGMA2_FLOOR, cap: float = SIGMA2_CAP,
+) -> float:
     """Mean per-task Bernoulli variance, clamped so power-sizing stays finite."""
     if not p_by_task:
         return cap
     vals = [p * (1.0 - p) for p in p_by_task.values()]
-    return max(floor, min(cap, sum(vals) / len(vals)))
+    estimate = sum(vals) / len(vals)
+    if k is not None and k > 1:
+        estimate *= k / (k - 1)
+    return max(floor, min(cap, estimate))
 
 
 def calibrate(
@@ -119,7 +122,7 @@ def calibrate(
                     runtime_sec=float(runtimes.get(t, DEFAULT_RUNTIME_SEC)), k=k)
         for t in task_ids
     }
-    sigma2 = compute_sigma2({t: stats[t].p for t in task_ids})
+    sigma2 = compute_sigma2({t: stats[t].p for t in task_ids}, k=k)
     return Calibration(stats=stats, sigma2=sigma2, model=model,
                        baseline_hash=baseline.content_hash())
 

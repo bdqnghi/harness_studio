@@ -45,10 +45,15 @@ from pathlib import Path
 
 from ..harness import Harness
 from .base import Benchmark
-from .kira import parse_harbor_results
+from .kira import BenchmarkExecutionError, require_complete_harbor_results
 
 # Portable: override on another machine with `export AHE_DIR=/path/to/agentic-harness-engineering`.
-DEFAULT_AHE_DIR = Path(os.environ.get("AHE_DIR", "/Users/nghibui/codes/agentic-harness-engineering"))
+DEFAULT_AHE_DIR = Path(
+    os.environ.get(
+        "AHE_DIR",
+        str(Path(__file__).resolve().parents[3] / "agentic-harness-engineering"),
+    )
+)
 DEFAULT_TASK_CACHE = Path(os.environ.get("HARBOR_TASK_CACHE", str(Path.home() / ".cache" / "harbor" / "tasks")))
 AGENT_CONFIG_FILENAME = "code_agent.yaml"
 
@@ -108,11 +113,16 @@ def provider_of(model: str) -> str:
     return "openai"
 
 
-def api_type_for(model: str) -> str:
-    return _PROVIDER_API_TYPE.get(provider_of(model), "openai_chat_completion")
+def api_type_for(model: str, provider: str | None = None) -> str:
+    prov = provider or provider_of(model)
+    if prov not in _PROVIDER_API_TYPE:
+        raise ValueError(f"unsupported NexAU provider {prov!r}")
+    return _PROVIDER_API_TYPE[prov]
 
 
-def load_llm_env(ahe_dir: Path, model: str) -> dict[str, str]:
+def load_llm_env(
+    ahe_dir: Path, model: str, provider: str | None = None
+) -> dict[str, str]:
     """Assemble the ``LLM_*`` env harbor's nexau agent needs, provider-aware.
 
     The actor's provider is inferred from ``model``; its key is read from the
@@ -121,7 +131,9 @@ def load_llm_env(ahe_dir: Path, model: str) -> dict[str, str]:
     ``LLM_MODEL`` is always ``model`` and ``LLM_API_TYPE`` selects the nexau path.
     """
     env_file = parse_dotenv(Path(ahe_dir) / ".env")
-    prov = provider_of(model)
+    prov = provider or provider_of(model)
+    if prov not in _PROVIDER_API_TYPE:
+        raise ValueError(f"unsupported NexAU provider {prov!r}")
 
     def pick(*names: str) -> str:
         for n in names:
@@ -130,7 +142,7 @@ def load_llm_env(ahe_dir: Path, model: str) -> dict[str, str]:
                 return v
         return ""
 
-    out = {"LLM_MODEL": model, "LLM_API_TYPE": api_type_for(model)}
+    out = {"LLM_MODEL": model, "LLM_API_TYPE": api_type_for(model, prov)}
     key = pick(*_PROVIDER_KEY_ENV.get(prov, ()), "LLM_API_KEY", "GPT54_LLM_API_KEY")
     base_url = pick(*_PROVIDER_BASE_ENV.get(prov, ())) or _PROVIDER_BASE_URL.get(prov, "")
     if key:
@@ -152,6 +164,7 @@ class NexauBenchmark(Benchmark):
         task_cache: Path = DEFAULT_TASK_CACHE,
         tasks: list[str] | None = None,
         model: str = "gemini-3.5-flash",
+        provider: str | None = None,
         env: str = "docker",
         n_concurrent: int = 4,
         k: int = 1,
@@ -165,6 +178,8 @@ class NexauBenchmark(Benchmark):
         self.task_cache = Path(task_cache)
         self.tasks = list(tasks or [])
         self.model = model
+        self.provider = provider or provider_of(model)
+        api_type_for(model, self.provider)  # fail fast on unsupported providers
         self.env = env
         self.n_concurrent = n_concurrent
         self.k = k
@@ -237,7 +252,7 @@ class NexauBenchmark(Benchmark):
 
     def _subprocess_env(self) -> dict[str, str]:
         sub_env = os.environ.copy()
-        sub_env.update(load_llm_env(self.ahe_dir, self.model))
+        sub_env.update(load_llm_env(self.ahe_dir, self.model, self.provider))
         # Docker path: nexau is installed into the task container at runtime
         # (the pre-baked /opt/nexau-venv is E2B-only). Honor an explicit override.
         sub_env.setdefault("USE_BP_E2B", "False")
@@ -278,22 +293,27 @@ class NexauBenchmark(Benchmark):
         self._link_dataset(task_ids, dataset_dir)
         cmd = self.build_cmd(harness, task_ids, jobs_dir, dataset_dir)
         log_path = work / "harbor.log"
-        with open(log_path, "w") as log:
-            log.write("$ " + " ".join(cmd) + "\n\n")
-            log.flush()
-            # Do not raise on non-zero exit: a partial run still produces reward
-            # files for the tasks that finished; parse_harbor_results scores a
-            # missing task as 0.0 (a failed run, not absent data).
-            subprocess.run(
-                cmd, cwd=str(self.ahe_dir), env=self._subprocess_env(),
-                stdout=log, stderr=subprocess.STDOUT,
+        try:
+            with open(log_path, "w") as log:
+                log.write("$ " + " ".join(cmd) + "\n\n")
+                log.flush()
+                proc = subprocess.run(
+                    cmd, cwd=str(self.ahe_dir), env=self._subprocess_env(),
+                    stdout=log, stderr=subprocess.STDOUT,
+                )
+            self._capture_traces(jobs_dir, task_ids)
+            if proc.returncode != 0:
+                tail = log_path.read_text(errors="replace")[-2000:]
+                raise BenchmarkExecutionError(
+                    f"Harbor exited with rc={proc.returncode}:\n{tail}"
+                )
+            return require_complete_harbor_results(
+                jobs_dir, task_ids, expected_trials=max(1, self.k)
             )
-        results = parse_harbor_results(jobs_dir, task_ids)
-        self._capture_traces(jobs_dir, task_ids)
-        # Free disk immediately: the excerpts we need are now in memory, so the
-        # (potentially large) per-trial logs/traces don't accumulate across a run.
-        shutil.rmtree(work, ignore_errors=True)
-        return results
+        finally:
+            # Free disk immediately: the excerpts we need are now in memory, so
+            # per-trial logs and traces do not accumulate across a run.
+            shutil.rmtree(work, ignore_errors=True)
 
     # --- trace-feeding: surface why a task failed (PRD §5.1 trajectory) ---
 

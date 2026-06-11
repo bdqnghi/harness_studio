@@ -21,7 +21,7 @@ from .base import AgentResult, Backend
 
 DEFAULT_TIER_B_MODEL = os.environ.get("STUDIO_TIER_B_MODEL", "claude-haiku-4-5-20251001")
 DEFAULT_TIER_A_MODEL = os.environ.get("STUDIO_TIER_A_MODEL", "claude-sonnet-4-6")
-TIER_A_TOOLS = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"]
+TIER_A_TOOLS = ["Read", "Edit", "Write", "Grep", "Glob"]
 
 
 class ClaudeCLIError(RuntimeError):
@@ -36,12 +36,10 @@ class ClaudeCLIBackend(Backend):
         *,
         tier_b_model: str = DEFAULT_TIER_B_MODEL,
         tier_a_model: str = DEFAULT_TIER_A_MODEL,
-        skip_permissions: bool = True,
         log_dir: Path | None = None,
     ) -> None:
         self.tier_b_model = tier_b_model
         self.tier_a_model = tier_a_model
-        self.skip_permissions = skip_permissions
         self.log_dir = Path(log_dir) if log_dir else None
         if self.log_dir:
             self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -99,10 +97,7 @@ class ClaudeCLIBackend(Backend):
             cmd += ["--add-dir", str(d)]
         if skill:
             cmd += ["--append-system-prompt", skill]
-        if self.skip_permissions:
-            cmd += ["--dangerously-skip-permissions"]
-        else:
-            cmd += ["--permission-mode", "acceptEdits"]
+        cmd += ["--permission-mode", "acceptEdits"]
 
         envelope = self._run(cmd, tag=tag, timeout=timeout, cwd=workspace)
         after = _snapshot(workspace)

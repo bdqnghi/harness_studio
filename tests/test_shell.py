@@ -50,3 +50,17 @@ def test_budget_overflow_rejects(tmp_path):
     res = shell.enforce(original, candidate, pmap, budget_per_part=1)
     assert not res.ok
     assert res.violations and "tool_code" in res.violations[0]
+
+
+def test_strict_additive_requires_only_new_files(tmp_path):
+    original, candidate = _pair(tmp_path)
+    assert not shell.is_strictly_additive(original, candidate)
+
+    pmap = toy_part_map()
+    pmap.parts[PartType.TOOL_CODE] = ["tools.py", "extras/"]
+    (candidate.root / "extras").mkdir()
+    (candidate.root / "extras" / "helper.py").write_text("x = 1\n")
+    assert shell.is_strictly_additive(original, candidate)
+
+    toy_fixes.fix_reverse(candidate.root)
+    assert not shell.is_strictly_additive(original, candidate)

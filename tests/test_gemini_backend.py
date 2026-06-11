@@ -13,7 +13,7 @@ import json
 import pytest
 
 from studio import schemas
-from studio.backends.gemini import GeminiBackend, GeminiBackendError
+from studio.backends.gemini import GeminiBackend, GeminiBackendError, TOOL_SCHEMAS
 
 
 # --- minimal fake of the OpenAI chat-completions client ---
@@ -180,13 +180,9 @@ def test_run_agent_stops_at_max_turns(tmp_path):
     assert len(b._client.chat.completions.calls) == 3
 
 
-def test_run_agent_run_bash_executes(tmp_path):
-    b = _backend([
-        _tools([{"name": "run_bash", "args": {"cmd": "echo hello-from-bash"}}]),
-        _tools([{"name": "complete_task", "args": {"summary": "ran"}}]),
-    ])
-    res = b.run_agent("run", workspace=tmp_path, tag="strategist")
-    assert res.raw["turns"] == 2  # completed without error
+def test_run_agent_does_not_expose_shell():
+    names = {tool["function"]["name"] for tool in TOOL_SCHEMAS}
+    assert "run_bash" not in names
 
 
 def test_run_agent_preserves_thought_signature_in_transcript(tmp_path):

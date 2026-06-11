@@ -33,7 +33,7 @@ from .components.splitter import TaskSplit, sample_practice, split_tasks
 from .components.strategist import Strategy
 from .config import Config
 from .harness import Harness
-from .parts import PartMap, PartType
+from .parts import PartMap
 from .state import RoundOutcome, WorkspaceState
 
 
@@ -123,10 +123,18 @@ class Orchestrator:
 
     def run(self) -> RunResult:
         baseline_final = self._final_score()
-        self.state.wobble = wobble.measure_wobble(
+        judging_wobble = wobble.measure_wobble(
             self.benchmark, self.harness, self.split.judging,
             runs=self.config.loop.wobble_runs,
         )
+        regression_wobble = (
+            wobble.measure_wobble(
+                self.benchmark, self.harness, self.split.regression,
+                runs=self.config.loop.wobble_runs,
+            )
+            if self.split.regression else 0.0
+        )
+        self.state.wobble = max(judging_wobble, regression_wobble)
         self.snapshotter.save(self.harness, 0, self._judging_score())
         # Seed the deep-audit "best so far" with the baseline harness.
         self._best_audit_score = self._audit_score()
@@ -310,7 +318,7 @@ class Orchestrator:
     def _test_in_order(self, round_idx: int, strategies: list[Strategy]) -> None:
         gate = Gate(
             self.benchmark, self.split.judging, self.state.wobble,
-            gen_tasks=self.split.gen,  # dual-split when populated (choose_eval_plan); [] -> single-split
+            regression_tasks=self.split.regression,  # dual-split when populated (choose_split); [] -> single-split
             borderline_extra_runs=self.config.gate.borderline_extra_runs,
         )
         last_note = "no strategy passed the gate"
@@ -334,15 +342,10 @@ class Orchestrator:
                 if not res.ok or not res.changed_parts:
                     last_note = "repair violated shell invariants"
                     continue
-            # An edit that rewrites the system prompt (INSTRUCTIONS) *replaces*
-            # guidance the agent already follows, so it must prove it improves
-            # the judging set. A strictly additive edit (new tool / middleware /
-            # skill / memory, prose untouched) can only help inputs that
-            # exercise the new surface — which a capability-limited pool may not
-            # contain — so we accept it under do-no-harm (reject only on a real
-            # regression). This is what lets us capture the latent held-out value
-            # AHE's blind-commit captures, without abandoning never-regress.
-            additive = PartType.INSTRUCTIONS not in s.changed_parts
+            # Only a pure file addition is structurally additive. Rewriting or
+            # deleting any existing file can alter behavior the visible gate does
+            # not exercise, regardless of which part type owns that file.
+            additive = shell.is_strictly_additive(self.harness, s.candidate)
             decision = gate.evaluate(self.harness, s.candidate, additive=additive)
             if decision.accept:
                 self.harness = s.candidate.copy_to(self.state.harness_dir)

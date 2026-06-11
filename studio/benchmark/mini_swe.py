@@ -37,7 +37,8 @@ from ..harness import Harness
 from ..parts import PartMap, PartType
 from .base import Benchmark
 # Reuse nexau's unit-tested helpers so the scoring/credential contract is shared.
-from .nexau import DEFAULT_AHE_DIR, DEFAULT_TASK_CACHE, load_llm_env, parse_harbor_results
+from .kira import BenchmarkExecutionError, require_complete_harbor_results
+from .nexau import DEFAULT_AHE_DIR, DEFAULT_TASK_CACHE, load_llm_env
 
 # Default actor in litellm format (mini-swe-agent uses litellm natively).
 DEFAULT_MODEL = "gemini/gemini-3.5-flash"
@@ -59,6 +60,11 @@ class MiniSweBenchmark(Benchmark):
         force_build: bool = True,
         harbor_bin: Path | None = None,
     ) -> None:
+        if "/" not in model or not all(model.split("/", 1)):
+            raise ValueError(
+                "mini-swe-agent model must use provider/model format "
+                f"(received {model!r})"
+            )
         self.real = real
         self.ahe_dir = Path(ahe_dir)
         self.task_cache = Path(task_cache)
@@ -152,6 +158,25 @@ class MiniSweBenchmark(Benchmark):
                 link.unlink()
             link.symlink_to(src, target_is_directory=True)
 
+    def _validate_harness_injection(self) -> None:
+        installed_roots = (
+            self.ahe_dir / ".venv" / "lib"
+        ).glob("python*/site-packages/harbor/agents/installed")
+        for root in installed_roots:
+            agent = root / "mini_swe_agent.py"
+            installer = root / "install-mini-swe-agent.sh.j2"
+            if agent.is_file() and installer.is_file():
+                if (
+                    "MSWEA_HARNESS_DIR" in agent.read_text(errors="replace")
+                    and "/mswea-harness" in installer.read_text(errors="replace")
+                ):
+                    return
+        raise RuntimeError(
+            "the pinned Harbor mini-swe-agent installation is missing the "
+            "MSWEA_HARNESS_DIR injection patch; refusing to evaluate upstream "
+            "mini-swe-agent instead of the mutated harness"
+        )
+
     # --- scoring ---
 
     def run(self, harness: Harness, task_ids, *, run_idx: int = 0) -> dict[str, float]:
@@ -168,6 +193,7 @@ class MiniSweBenchmark(Benchmark):
                 f"harbor not found at {self.harbor_bin}; expected AHE's pinned harbor "
                 f"(run `uv sync` in {self.ahe_dir})"
             )
+        self._validate_harness_injection()
         work = Path(tempfile.mkdtemp(prefix=f"studio-mini-swe-r{run_idx}-"))
         dataset_dir = work / "dataset"
         jobs_dir = work / "jobs"
@@ -175,21 +201,25 @@ class MiniSweBenchmark(Benchmark):
         self._link_dataset(task_ids, dataset_dir)
         cmd = self.build_cmd(harness, task_ids, jobs_dir, dataset_dir)
         log_path = work / "harbor.log"
-        with open(log_path, "w") as log:
-            log.write("$ " + " ".join(cmd) + "\n\n")
-            log.flush()
-            # Do not raise on non-zero exit: a partial run still produces reward
-            # files for the tasks that finished; parse_harbor_results scores a
-            # missing task as 0.0 (a failed run, not absent data).
-            subprocess.run(
-                cmd, cwd=str(self.ahe_dir), env=self._subprocess_env(harness),
-                stdout=log, stderr=subprocess.STDOUT,
+        try:
+            with open(log_path, "w") as log:
+                log.write("$ " + " ".join(cmd) + "\n\n")
+                log.flush()
+                proc = subprocess.run(
+                    cmd, cwd=str(self.ahe_dir), env=self._subprocess_env(harness),
+                    stdout=log, stderr=subprocess.STDOUT,
+                )
+            self._capture_traces(jobs_dir, task_ids)
+            if proc.returncode != 0:
+                tail = log_path.read_text(errors="replace")[-2000:]
+                raise BenchmarkExecutionError(
+                    f"Harbor exited with rc={proc.returncode}:\n{tail}"
+                )
+            return require_complete_harbor_results(
+                jobs_dir, task_ids, expected_trials=max(1, self.k)
             )
-        results = parse_harbor_results(jobs_dir, task_ids)
-        self._capture_traces(jobs_dir, task_ids)
-        # Free disk immediately: the excerpts we need are now in memory.
-        shutil.rmtree(work, ignore_errors=True)
-        return results
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
 
     # --- trace-feeding: surface why a task failed (PRD §5.1 trajectory) ---
 
@@ -307,8 +337,12 @@ def mini_swe_part_map() -> PartMap:
     return PartMap(
         parts={
             PartType.INSTRUCTIONS: ["src/minisweagent/config/"],
-            PartType.TOOL_DESCRIPTIONS: ["src/minisweagent/models/utils/", "src/minisweagent/environments/"],
-            PartType.TOOL_CODE: ["src/minisweagent/models/utils/", "src/minisweagent/environments/"],
+            PartType.TOOL_DESCRIPTIONS: [
+                "src/minisweagent/models/utils/actions_text.py",
+                "src/minisweagent/models/utils/actions_toolcall.py",
+                "src/minisweagent/models/utils/actions_toolcall_response.py",
+            ],
+            PartType.TOOL_CODE: ["src/minisweagent/environments/"],
             PartType.MIDDLEWARE: ["src/minisweagent/models/litellm_model.py"],
             PartType.MEMORY: ["src/minisweagent/agents/default.py"],
         },

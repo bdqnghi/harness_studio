@@ -1,8 +1,27 @@
-"""Task splitter (PRD §5.0c, §6): partition tasks into four disjoint piles.
+"""Task splitter: carve a benchmark into the three working sets.
 
-Keeping the piles disjoint is what stops the harness from "winning" by
-overfitting the exact tasks it is repeatedly scored on. The final-exam pile is
-carved first and never touched until the end (the one honest number).
+The optimizer has a **fixed appetite** (like an SGD mini-batch): the sets it
+sees every round do NOT grow with the benchmark size. So a benchmark is split
+into three sets only:
+
+  * **held-in pool** (``practice``)  — the variety pool; each round samples
+    ``round_size`` tasks from it to find failures AND first-check an edit.
+  * **regression**                   — a disjoint do-no-harm set; an edit must
+    not hurt it (the second, independent gate check).
+  * **held-out test** (``final_exam``) — locked the whole time, graded once at
+    the end. This is the only honest number.
+
+``judging`` is a stable, power-sized slice of the held-in pool (the gate scores
+old-vs-new on it every round); ``audit`` is a small slice of the pool the deep
+auditor periodically re-checks. Slow/"heavy" tasks go ONLY into the locked test
+(never the every-round sets), so a 3-hour task can be graded but can never stall
+a round.
+
+Held-in (pool + regression) is a roughly constant scoop (≤ a few hundred) no
+matter how big N is; everything else goes to the locked test, so **more data
+buys a sharper final number, not a slower optimizer.** Below a floor where an
+honest held-out can't be seated, the plan switches to *transfer* mode (optimize
+on all, verify on a different benchmark/model).
 """
 
 from __future__ import annotations
@@ -16,11 +35,11 @@ from ..config import PileConfig
 
 @dataclass
 class TaskSplit:
-    practice: list[str]  # pool sampled fresh each round (Runner)
-    judging: list[str]  # stable within a segment (Gate — split 1)
-    audit: list[str]  # large, mostly untouched (Deep auditor)
-    final_exam: list[str]  # locked until the very end (Final report)
-    gen: list[str] = field(default_factory=list)  # Gate split 2 (dual-split generalization check)
+    practice: list[str]  # held-in pool sampled fresh each round (Runner)
+    judging: list[str]  # stable gate set (primary do-no-harm check) ⊆ practice
+    audit: list[str]  # small pool slice the deep auditor re-checks ⊆ practice
+    final_exam: list[str]  # locked until the very end (the one honest number)
+    regression: list[str] = field(default_factory=list)  # disjoint do-no-harm 2nd check
 
 
 def _ordering(task_ids: list[str], seed: int) -> list[str]:
@@ -33,7 +52,9 @@ def _ordering(task_ids: list[str], seed: int) -> list[str]:
 
 
 def split_tasks(task_ids: list[str], piles: PileConfig, seed: int = 0) -> TaskSplit:
-    """Carve the piles in priority order: final_exam, audit, judging, practice."""
+    """Fixed-size fallback split (used when no adaptive plan is supplied).
+
+    Carves in priority order: final_exam, audit, judging, practice."""
     order = _ordering(task_ids, seed)
     take = lambda n: [order.pop(0) for _ in range(min(n, len(order)))]  # noqa: E731
     final_exam = take(piles.final_exam)
@@ -49,146 +70,39 @@ def sample_practice(split: TaskSplit, size: int, seed: int, round_idx: int) -> l
     return order[:size]
 
 
-# --- dynamic, benchmark-size-aware splitting -----------------------------------
+# === power-based, calibration-aware planning ===================================
+#
+# Held-in size comes from STATISTICAL POWER + an affordability cap, so it is
+# ~constant across N (an SGD mini-batch), not a fraction of N. Surplus tasks in a
+# big benchmark go to the locked test (scored once), buying test precision.
+
 
 @dataclass
 class SplitPlan:
     """A size-aware evaluation plan chosen from the benchmark itself.
 
-    ``mode == "holdout"``: one fixed disjoint split (use ``.split``).
-    ``mode == "kfold"``: rotate the test slice across ``.folds`` (use each
-    fold's ``final_exam`` as that fold's test set, the rest to optimize on).
+    ``mode == "holdout"``: a single fixed split with a locked test (use ``.split``).
+    ``mode == "transfer"``: N too small for an honest held-out — optimize on all,
+    verify generalization on a different benchmark/model (caller's job).
     """
 
     mode: str
-    k: int
+    k: int                          # rollouts for the final graded test (test_k)
     split: TaskSplit | None = None
-    folds: list[TaskSplit] | None = None
     rationale: str = ""
-    # power-based reporting (filled by choose_eval_plan)
-    n_val: int = 0
     sigma2: float = 0.0
-    detectable_step: float = 0.0   # smallest effect the per-round gate can resolve
-    detectable_final: float = 0.0  # smallest effect the test/CV verdict can resolve
-    recommend: str = ""            # "holdout" | "cv" (why this mode)
+    n_pool: int = 0                 # held-in variety pool (~constant across N)
+    n_judging: int = 0              # stable gate set ⊆ pool
+    n_regression: int = 0           # disjoint do-no-harm set
+    n_test: int = 0                 # locked, graded once
+    detectable_round: float = 0.0   # smallest effect the per-round gate can resolve
+    detectable_final: float = 0.0   # smallest effect the locked-test verdict can resolve
+    recommend: str = ""             # "split" | "transfer"
 
 
 def _clamp(x: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, x))
 
-
-def dynamic_split(
-    task_ids: list[str],
-    *,
-    timeouts: dict[str, float] | None = None,
-    seed: int = 0,
-    k: int = 3,
-    heavy_sec: float = 3600.0,
-    kfold_threshold: int = 50,
-    n_folds: int = 5,
-    frac_test: float = 0.30,
-    frac_audit: float = 0.10,
-    frac_val: float = 0.18,
-    min_test: int = 15,
-    min_val: int = 8,
-    min_audit: int = 4,
-    min_practice: int = 10,
-) -> SplitPlan:
-    """Choose the four piles automatically from the benchmark **size** (and the
-    per-task ``timeouts``, used only to keep the frequently-run gate fast).
-
-    Principles:
-      * **Power floors.** test/val/audit each get a minimum size, so a small
-        benchmark can't yield an underpowered comparison.
-      * **Small N falls back to cross-validation.** Below ``kfold_threshold`` a
-        fixed held-out would be too small to be significant, so we rotate the
-        test slice across ``n_folds`` and average the lift.
-      * **Representative test.** The test set is reserved first from the *full*
-        seeded shuffle, so it mirrors the whole benchmark (incl. heavy tasks) —
-        this is the fix for the hard-unrepresentative-subset bug.
-      * **Fast gate.** Pathologically slow tasks (``timeout >= heavy_sec``) are
-        kept OUT of judging/audit (which run every round) and absorbed by test
-        (scored once) and practice (sampled). Since runtime is ~independent of
-        difficulty, this does not bias the validation difficulty distribution.
-    """
-    task_ids = list(task_ids)
-    N = len(task_ids)
-    timeouts = timeouts or {}
-    order = _ordering(task_ids, seed)
-
-    # A fixed holdout is only honest when it's both non-degenerate (every pile,
-    # incl. practice, has enough tasks) AND statistically adequate (the test set
-    # isn't a handful of noisy tasks). Below that, reusing tasks via k-fold CV is
-    # the sound choice. The floors alone need test+val+audit+practice =
-    # 15+8+4+10 = 37 tasks just to not starve a pile, and a trustworthy noisy
-    # test set wants more headroom — hence kfold_threshold defaults to 50.
-    floor_min = min_test + min_val + min_audit + min_practice
-    use_holdout = N >= max(kfold_threshold, floor_min)
-
-    if use_holdout:
-        n_test = _clamp(round(frac_test * N), min_test, N - (min_val + min_audit + min_practice))
-        n_audit = _clamp(round(frac_audit * N), min_audit, N)
-        n_val = _clamp(round(frac_val * N), min_val, N)
-
-        # 1. Reserve a REPRESENTATIVE test set from the full shuffle (incl. heavies).
-        test = order[:n_test]
-        rest = order[n_test:]
-
-        # 2. Fill judging + audit from LIGHT tasks only (keep the gate fast); slow
-        #    tasks fall through to practice. Fall back to heavy if light runs short.
-        light = [t for t in rest if timeouts.get(t, 0.0) < heavy_sec]
-        heavy = [t for t in rest if timeouts.get(t, 0.0) >= heavy_sec]
-        pool = light + heavy  # light first, so heavies are the last picked
-        judging = pool[:n_val]
-        audit = pool[n_val:n_val + n_audit]
-        practice = pool[n_val + n_audit:]
-
-        if len(practice) >= min_practice:  # non-degenerate -> commit to holdout
-            return SplitPlan(
-                mode="holdout", k=k,
-                split=TaskSplit(practice=practice, judging=judging, audit=audit, final_exam=test),
-                rationale=(f"N={N}: test={len(test)} (representative, locked), "
-                           f"judging={len(judging)} (light, k={k} gate), audit={len(audit)}, "
-                           f"practice={len(practice)} (incl. {len(heavy)} heavy). "
-                           f"{len([t for t in test if timeouts.get(t,0)>=heavy_sec])} heavy in test."),
-            )
-        # else: the floors starved practice -> fall through to k-fold.
-
-    folds = _make_kfold(order, n_folds=min(n_folds, N), timeouts=timeouts, heavy_sec=heavy_sec)
-    why = ("starves practice" if N >= kfold_threshold else f"< {kfold_threshold}")
-    return SplitPlan(
-        mode="kfold", k=k, folds=folds,
-        rationale=(f"N={N} too small for a fixed holdout ({why}): {len(folds)}-fold "
-                   f"cross-validation (rotate test slice, ~{N // max(1, len(folds))} tasks/fold), "
-                   f"k={k} per task. Every task is both optimized-on and tested-on (no leak "
-                   f"within a fold)."),
-    )
-
-
-def _make_kfold(order, *, n_folds, timeouts, heavy_sec):
-    """Partition into ``n_folds`` test slices; each fold optimizes on the rest."""
-    folds: list[TaskSplit] = []
-    buckets = [order[i::n_folds] for i in range(n_folds)]  # round-robin = balanced
-    for i in range(n_folds):
-        test = buckets[i]
-        rest = [t for j, b in enumerate(buckets) if j != i for t in b]
-        light = [t for t in rest if timeouts.get(t, 0.0) < heavy_sec]
-        heavy = [t for t in rest if timeouts.get(t, 0.0) >= heavy_sec]
-        pool = light + heavy
-        n_val = max(2, round(0.45 * len(rest)))
-        n_audit = max(1, round(0.15 * len(rest)))
-        folds.append(TaskSplit(
-            practice=pool[n_val + n_audit:], judging=pool[:n_val],
-            audit=pool[n_val:n_val + n_audit], final_exam=test,
-        ))
-    return folds
-
-
-# === power-based, calibration-aware planning ===================================
-#
-# Validation size comes from STATISTICAL POWER + an affordability cap, so it is
-# ~constant across N (an SGD mini-batch), not a fraction of N. Surplus tasks in a
-# big benchmark buy test precision and a resample pool, not a bigger gate.
 
 def power_n(sigma2: float, *, z: float = 1.96, delta: float = 0.1, k: int = 3) -> int:
     """Tasks (at k rollouts) needed to resolve a paired effect ``delta`` at noise
@@ -235,116 +149,138 @@ def _stratified_sample(pool: list[str], n: int, strata: dict[str, int], seed: in
     return picked
 
 
-def _carve_optimization(rest: list[str], *, n_val: int, n_gen: int, n_audit: int,
-                        strata: dict[str, int], timeouts: dict[str, float],
-                        heavy_sec: float, seed: int) -> TaskSplit:
-    """Carve judging/gen/audit/practice from optimization tasks ``rest``.
-
-    judging+gen+audit are drawn (disjoint) from the LIGHT tasks only — they run
-    every round, so a 1-2h task must never gate. They are difficulty-stratified
-    for representativeness. Heavy tasks (and leftover light) fall to practice
-    (sampled mini-batches, so a heavy task rarely gates failure-finding)."""
-    light = [t for t in rest if timeouts.get(t, 0.0) < heavy_sec]
-    avail = list(light)
-    judging = _stratified_sample(avail, n_val, strata, seed + 1)
-    taken = set(judging)
-    gen = _stratified_sample([t for t in avail if t not in taken], n_gen, strata, seed + 2)
-    taken |= set(gen)
-    audit = _stratified_sample([t for t in avail if t not in taken], n_audit, strata, seed + 3)
-    taken |= set(audit)
-    # Practice = LIGHT leftover only. Heavy tasks are excluded from optimization
-    # entirely (a single build-pov-ray draw would stall a round); under CV every
-    # heavy is still scored as a test task in its own fold, so none are dropped
-    # from the verdict.
-    practice = [t for t in light if t not in taken]
-    return TaskSplit(practice=practice, judging=judging, audit=audit,
-                     final_exam=[], gen=gen)
-
-
-def choose_eval_plan(
+def choose_split(
     task_ids: list[str],
     *,
     sigma2: float,
+    round_size: int = 32,
     difficulties: dict[str, float] | None = None,
     timeouts: dict[str, float] | None = None,
     seed: int = 0,
-    k: int = 3,
+    opt_k: int = 1,
+    test_k: int = 3,
     z: float = 1.96,
-    delta_step: float = 0.12,
-    delta_final: float = 0.05,
+    delta_round: float = 0.12,
     val_floor: int = 8,
-    val_budget_cap: int = 16,
-    audit_floor: int = 4,
-    test_floor: int = 15,
-    practice_floor: int = 10,
+    reg_floor: int = 16,
+    reg_cap: int = 32,
+    pool_mult: int = 4,
+    pool_cap: int = 256,
+    test_floor: int = 25,
+    test_budget_cap: int = 0,
     heavy_sec: float = 3600.0,
-    n_folds: int = 5,
 ) -> SplitPlan:
-    """Power-based, calibration-aware split (the 'better algorithm').
+    """Carve the benchmark into held-in pool + regression + locked test.
 
-    n_val is set by statistical power (``delta_step``) clamped to a budget cap, so
-    it is ~constant across N. The mode is chosen by the *detectable effect*: if a
-    holdout test can't resolve ``delta_final`` (or piles would starve), fall back
-    to k-fold CV. Selection is difficulty-stratified; the dual-split gate's two
-    sets (``judging`` + ``gen``) are sized equally and kept off the heavy tasks.
+    The held-in scoop (``pool`` + ``regression``) is sized by power and capped, so
+    it stays ~constant as N grows; the locked test absorbs everything else. Slow
+    tasks (``timeout >= heavy_sec``) go ONLY to the test. Below a floor where an
+    honest held-out can't be seated, returns ``mode="transfer"``.
+
+    Sizing knobs:
+      * ``round_size`` — tasks run per round (the SGD mini-batch). Default 32.
+      * ``pool`` = clamp(``pool_mult*round_size``, round_size, ``pool_cap``).
+      * ``regression`` = clamp(power_n(δ=``delta_round``), ``reg_floor``, ``reg_cap``).
+      * ``judging`` (stable gate slice ⊆ pool) = clamp(power_n, ``val_floor``, round_size).
+      * ``test`` = all leftover (incl. every heavy task); a ``test_budget_cap`` (>0)
+        keeps every heavy task and grades a representative light-task subsample.
     """
-    task_ids = list(task_ids)
+    task_ids = list(dict.fromkeys(task_ids))
     N = len(task_ids)
+    if round_size <= 0:
+        raise ValueError("round_size must be positive")
+    if opt_k <= 0 or test_k <= 0:
+        raise ValueError("opt_k and test_k must be positive")
+    if reg_floor < 0 or reg_cap < reg_floor:
+        raise ValueError("reg_cap must be >= reg_floor >= 0")
+    if pool_mult <= 0 or pool_cap < round_size:
+        raise ValueError("pool_mult must be positive and pool_cap must be >= round_size")
+    if test_floor < 0 or test_budget_cap < 0:
+        raise ValueError("test_floor and test_budget_cap must be non-negative")
     sigma2 = max(0.01, min(0.25, sigma2))
     timeouts = timeouts or {}
     strata = _strata(task_ids, difficulties)
-
-    n_val = _clamp(power_n(sigma2, z=z, delta=delta_step, k=k), val_floor, val_budget_cap)
-    n_gen = n_val
-    n_audit = _clamp(n_val // 2, audit_floor, n_val)
-    det_step = detectable_delta(n_val, sigma2, z=z, k=k)
-
     order = _ordering(task_ids, seed)
-    # A fixed holdout needs enough tasks to (a) seat the gate piles + a modest
-    # resample pool for practice, and (b) leave a test set big enough to resolve
-    # delta_final. The surplus beyond the gate+practice goes to TEST (scored once,
-    # so extra precision is ~free) — so test grows with N while the gate stays
-    # constant. Below that, CV reuses every task instead.
-    n_test_needed = power_n(sigma2, z=z, delta=delta_final, k=k)
-    practice_target = max(practice_floor, 3 * n_val)
-    n_test_avail = N - (n_val + n_gen + n_audit + practice_target)
-    holdout_ok = n_test_avail >= max(test_floor, n_test_needed)
 
-    if holdout_ok:
-        test = _stratified_sample(order, n_test_avail, strata, seed)  # absorb surplus, representative
-        rest = [t for t in order if t not in set(test)]
-        s = _carve_optimization(rest, n_val=n_val, n_gen=n_gen, n_audit=n_audit,
-                                strata=strata, timeouts=timeouts, heavy_sec=heavy_sec, seed=seed)
-        s.final_exam = test
-        det_final = detectable_delta(len(test), sigma2, z=z, k=k)
+    heavy = [t for t in order if timeouts.get(t, 0.0) >= heavy_sec]  # always test-only
+    light = [t for t in order if timeouts.get(t, 0.0) < heavy_sec]
+    L = len(light)
+
+    # --- fixed scoops (do NOT grow with N) ---
+    reg_n = _clamp(power_n(sigma2, z=z, delta=delta_round, k=opt_k), reg_floor, reg_cap)
+    pool_n = _clamp(pool_mult * round_size, round_size, pool_cap)
+    n_judging = _clamp(power_n(sigma2, z=z, delta=delta_round, k=opt_k), val_floor, round_size)
+
+    # The locked test must reach test_floor; the heavy tasks (all go to test) count.
+    test_light_floor = max(0, test_floor - len(heavy))
+
+    # --- shrink-to-fit for small benchmarks ---
+    # Light-task priority: regression (independent) -> pool (held-in) -> test.
+    deficit = (reg_n + pool_n + test_light_floor) - L
+    if deficit > 0:
+        cut = min(deficit, pool_n - round_size)   # shrink pool first, keep >= round_size
+        pool_n -= cut
+        deficit -= cut
+    if deficit > 0:
+        cut = min(deficit, reg_n - reg_floor)      # then regression, keep >= reg_floor
+        reg_n -= cut
+        deficit -= cut
+
+    if deficit > 0 or L < (round_size + reg_floor):
+        # Too few tasks to lock an honest held-out -> optimize on all, verify by
+        # TRANSFER (a different benchmark/model — the caller's job).
+        reg = _stratified_sample(light, min(reg_floor, max(0, L // 4)), strata, seed + 2)
+        pool = [t for t in light if t not in set(reg)]
+        judging = _stratified_sample(pool, min(len(pool), n_judging), strata, seed + 3)
+        audit = _stratified_sample(pool, min(len(pool), max(4, n_judging // 2)), strata, seed + 4)
+        split = TaskSplit(practice=pool, judging=judging, audit=audit,
+                          final_exam=list(heavy), regression=reg)
+        det_round = detectable_delta(len(judging), sigma2, z=z, k=opt_k)
         return SplitPlan(
-            mode="holdout", k=k, split=s, n_val=n_val, sigma2=sigma2,
-            detectable_step=det_step, detectable_final=det_final, recommend="holdout",
-            rationale=(f"N={N}: holdout test={len(test)} (representative), judging={len(s.judging)}+"
-                       f"gen={len(s.gen)} (dual-split, light), audit={len(s.audit)}, "
-                       f"practice={len(s.practice)}. detectable: gate~{det_step:.3f}, "
-                       f"test~{det_final:.3f} (<= delta_final {delta_final})."),
+            mode="transfer", k=test_k, split=split, sigma2=sigma2,
+            n_pool=len(pool), n_judging=len(judging), n_regression=len(reg),
+            n_test=len(split.final_exam), detectable_round=det_round,
+            detectable_final=0.0, recommend="transfer",
+            rationale=(f"N={N}: too small for an honest held-out ({L} light < "
+                       f"{round_size}+{reg_floor}); optimize on all and verify by "
+                       f"TRANSFER to another benchmark/model."),
         )
 
-    # CV: rotate the test slice; each fold carves the dual-split piles from its rest.
-    n_folds = min(n_folds, N) if N else 1
-    buckets = [order[i::n_folds] for i in range(n_folds)]
-    folds: list[TaskSplit] = []
-    for i in range(n_folds):
-        test = buckets[i]
-        rest = [t for j, b in enumerate(buckets) if j != i for t in b]
-        s = _carve_optimization(rest, n_val=n_val, n_gen=n_gen, n_audit=n_audit,
-                                strata=strata, timeouts=timeouts, heavy_sec=heavy_sec, seed=seed + i)
-        s.final_exam = test
-        folds.append(s)
-    test_total = sum(len(f.final_exam) for f in folds)  # = N (every task tested once)
-    det_final = detectable_delta(test_total, sigma2, z=z, k=k)
-    why = (f"holdout would need ~{n_test_needed} test tasks to resolve {delta_final} "
-           f"but only {max(0, n_test_avail)} are free after the gate+practice")
+    # --- the normal single split ---
+    reg = _stratified_sample(light, reg_n, strata, seed + 2)
+    rest = [t for t in light if t not in set(reg)]
+    pool = _stratified_sample(rest, pool_n, strata, seed + 1)
+    taken = set(reg) | set(pool)
+    test_light = [t for t in light if t not in taken]
+    test_full = list(heavy) + test_light          # ALL heavy + leftover light
+    if test_budget_cap and len(test_full) > test_budget_cap:
+        required = max(test_floor, len(heavy))
+        if test_budget_cap < required:
+            raise ValueError(
+                "test_budget_cap cannot satisfy the locked-test invariants: "
+                f"need at least {required} slots for test_floor={test_floor} "
+                f"and {len(heavy)} heavy tasks"
+            )
+        light_budget = test_budget_cap - len(heavy)
+        test = list(heavy) + _stratified_sample(
+            test_light, light_budget, strata, seed + 9
+        )
+    else:
+        test = test_full
+    judging = _stratified_sample(pool, min(len(pool), n_judging), strata, seed + 3)
+    audit = _stratified_sample(pool, min(len(pool), max(4, n_judging // 2)), strata, seed + 4)
+    split = TaskSplit(practice=pool, judging=judging, audit=audit,
+                      final_exam=test, regression=reg)
+    det_round = detectable_delta(len(judging), sigma2, z=z, k=opt_k)
+    det_final = detectable_delta(len(test), sigma2, z=z, k=test_k)
+    graded_light = len(test) - len(heavy)
     return SplitPlan(
-        mode="kfold", k=k, folds=folds, n_val=n_val, sigma2=sigma2,
-        detectable_step=det_step, detectable_final=det_final, recommend="cv",
-        rationale=(f"N={N}: CV ({why}). {n_folds} folds (~{N // n_folds} test/fold, all {test_total} "
-                   f"tested via rotation). judging={n_val}+gen={n_gen} (dual-split, light), "
-                   f"audit={n_audit}. detectable: gate~{det_step:.3f}, pooled-test~{det_final:.3f}."),
+        mode="holdout", k=test_k, split=split, sigma2=sigma2,
+        n_pool=len(pool), n_judging=len(judging), n_regression=len(reg), n_test=len(test),
+        detectable_round=det_round, detectable_final=det_final, recommend="split",
+        rationale=(f"N={N}: held-in pool={len(pool)} (sample {round_size}/round) + "
+                   f"regression={len(reg)} (do-no-harm) | test={len(test)} locked "
+                   f"({len(heavy)} heavy + {graded_light} light, graded once at k={test_k}). "
+                   f"judging={len(judging)} (stable gate). detectable: round~{det_round:.3f}, "
+                   f"test~{det_final:.3f}."),
     )

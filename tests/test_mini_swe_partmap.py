@@ -33,6 +33,10 @@ def test_editability_under_mapped_dirs_and_do_not_touch():
     assert pm.is_editable("src/minisweagent/config/new_preset.yaml")
     assert pm.part_of("src/minisweagent/config/mini.yaml") is PartType.INSTRUCTIONS
     assert pm.part_of("pyproject.toml") is None
+    assert pm.part_of("src/minisweagent/environments/docker.py") is PartType.TOOL_CODE
+    assert pm.part_of(
+        "src/minisweagent/models/utils/actions_toolcall.py"
+    ) is PartType.TOOL_DESCRIPTIONS
 
 
 def test_run_raises_when_not_real(tmp_path):
@@ -63,3 +67,23 @@ def test_build_cmd_has_agent_and_no_config_dir(tmp_path):
     assert "--ak" not in cmd
     # Model is passed through in litellm format.
     assert cmd[cmd.index("--model") + 1] == "gemini/gemini-3.5-flash"
+
+
+def test_model_requires_provider_prefix():
+    with pytest.raises(ValueError, match="provider/model"):
+        MiniSweBenchmark(model="gpt-5.4")
+
+
+def test_injection_patch_preflight(tmp_path):
+    installed = (
+        tmp_path / ".venv" / "lib" / "python3.14" / "site-packages"
+        / "harbor" / "agents" / "installed"
+    )
+    installed.mkdir(parents=True)
+    (installed / "mini_swe_agent.py").write_text("MSWEA_HARNESS_DIR\n")
+    (installed / "install-mini-swe-agent.sh.j2").write_text("/mswea-harness\n")
+    MiniSweBenchmark(ahe_dir=tmp_path)._validate_harness_injection()
+
+    (installed / "mini_swe_agent.py").write_text("stock\n")
+    with pytest.raises(RuntimeError, match="injection patch"):
+        MiniSweBenchmark(ahe_dir=tmp_path)._validate_harness_injection()
