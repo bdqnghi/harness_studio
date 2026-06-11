@@ -101,18 +101,24 @@ def run_cell(args) -> dict:
     tasks = _opt_tasks(args)
     timeouts = read_task_timeouts(tasks, cache=Path(args.task_cache))
     diffs_meta = read_difficulty_meta(tasks, cache=Path(args.task_cache))
-    bench, src, part_map, proposer_model = make_target(
-        args.harness, args.backbone, real=not args.dry_run, k=args.k,
+    # Gate/optimize at opt_k (cheap, robust via the dual-split gate); score the
+    # VERDICT at test_k (trustworthy). The heavy TB2 tasks make all-k=3 brutal.
+    opt_bench, src, part_map, proposer_model = make_target(
+        args.harness, args.backbone, real=not args.dry_run, k=args.opt_k,
+        n_concurrent=args.n_concurrent, timeout_multiplier=args.timeout_multiplier,
+        ahe_dir=Path(args.ahe_dir))
+    test_bench, _, _, _ = make_target(
+        args.harness, args.backbone, real=not args.dry_run, k=args.test_k,
         n_concurrent=args.n_concurrent, timeout_multiplier=args.timeout_multiplier,
         ahe_dir=Path(args.ahe_dir))
 
     print(f"=== self-harness cell: harness={args.harness} backbone={args.backbone} ===")
-    print(f"actor=proposer model: {proposer_model} | tasks N={len(tasks)} | k={args.k}")
+    print(f"actor=proposer model: {proposer_model} | tasks N={len(tasks)} | opt_k={args.opt_k} test_k={args.test_k}")
 
     if args.dry_run:
         # No Docker: use a sigma2 prior + free metadata to preview the plan.
         plan = choose_eval_plan(tasks, sigma2=args.sigma2_prior, difficulties=diffs_meta,
-                                timeouts=timeouts, seed=args.seed, k=args.k,
+                                timeouts=timeouts, seed=args.seed, k=args.test_k,
                                 delta_step=args.delta_step, delta_final=args.delta_final,
                                 val_budget_cap=args.val_budget_cap, heavy_sec=args.heavy_sec,
                                 n_folds=args.n_folds)
@@ -127,11 +133,11 @@ def run_cell(args) -> dict:
 
     from studio.orchestrator import Orchestrator
 
-    # 1. Calibrate the baseline once (per-task difficulty + sigma2; reused as ref).
-    cal = calibrate(bench, src, tasks, k=args.k, runtimes=timeouts, model=args.backbone)
+    # 1. Calibrate the baseline once at opt_k (per-task difficulty + sigma2).
+    cal = calibrate(opt_bench, src, tasks, k=args.opt_k, runtimes=timeouts, model=args.backbone)
     print(f"calibrated: sigma2={cal.sigma2:.3f} baseline mean p={statistics.mean(cal.difficulties().values()):.3f}")
     plan = choose_eval_plan(tasks, sigma2=cal.sigma2, difficulties=cal.difficulties(),
-                            timeouts=timeouts, seed=args.seed, k=args.k,
+                            timeouts=timeouts, seed=args.seed, k=args.test_k,
                             delta_step=args.delta_step, delta_final=args.delta_final,
                             val_budget_cap=args.val_budget_cap, heavy_sec=args.heavy_sec,
                             n_folds=args.n_folds)
@@ -142,15 +148,15 @@ def run_cell(args) -> dict:
     per_task_lift: dict[str, float] = {}
     for i, fold in enumerate(folds):
         cfg = _fold_config(fold, seed=args.seed, args=args)
-        orch = Orchestrator(workspace=ws / f"fold_{i}", source_harness=src, benchmark=bench,
+        orch = Orchestrator(workspace=ws / f"fold_{i}", source_harness=src, benchmark=opt_bench,
                             backend=__import__("studio.backends.factory", fromlist=["make_backend"]).make_backend(
                                 proposer_model, log_dir=ws / f"fold_{i}" / "proposer-logs"),
                             config=cfg, part_map=part_map, split=fold)
         orch.run()
         best = Harness(orch.state.root / "best")
-        # Score baseline (cached from calibration at run_idx 0) vs optimized on the locked test.
-        base = bench.run(src, fold.final_exam, run_idx=0)
-        opt = bench.run(best, fold.final_exam, run_idx=0)
+        # Verdict: score baseline vs optimized on the LOCKED test slice at test_k.
+        base = test_bench.run(src, fold.final_exam, run_idx=0)
+        opt = test_bench.run(best, fold.final_exam, run_idx=0)
         for t in fold.final_exam:
             per_task_lift[t] = opt.get(t, 0.0) - base.get(t, 0.0)
         print(f"  fold{i}: test={len(fold.final_exam)} mean lift {statistics.mean([per_task_lift[t] for t in fold.final_exam]):+.3f}")
@@ -177,7 +183,8 @@ def run_matrix(args) -> None:
         for backbone in BACKBONES:
             ws = Path(args.workspace) / f"{harness}_{backbone}".replace("/", "-")
             cmd = [sys.executable, __file__, "--harness", harness, "--backbone", backbone,
-                   "--workspace", str(ws), "--task-cache", args.task_cache, "--k", str(args.k),
+                   "--workspace", str(ws), "--task-cache", args.task_cache,
+                   "--opt-k", str(args.opt_k), "--test-k", str(args.test_k),
                    "--rounds", str(args.rounds), "--n-concurrent", str(args.n_concurrent),
                    "--borderline-runs", str(args.borderline_runs)]
             if args.dry_run:
@@ -213,7 +220,8 @@ def main() -> None:
     ap.add_argument("--task-cache", default=str(DEFAULT_TASK_CACHE))
     ap.add_argument("--ahe-dir", default=str(DEFAULT_AHE_DIR))
     ap.add_argument("--workspace", default="/tmp/sho_self")
-    ap.add_argument("--k", type=int, default=3)
+    ap.add_argument("--opt-k", type=int, default=1, help="rollouts/task during calibration + gate (cheap)")
+    ap.add_argument("--test-k", type=int, default=3, help="rollouts/task for the final verdict (trustworthy)")
     ap.add_argument("--rounds", type=int, default=6)
     ap.add_argument("--segment-length", type=int, default=2)
     ap.add_argument("--strategies", type=int, default=2)
