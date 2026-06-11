@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from examples.tb2_config import PILES, SEED, TASKS  # noqa: E402
 from studio.benchmark.nexau import DEFAULT_AHE_DIR, NexauBenchmark  # noqa: E402
 from studio.components.splitter import TaskSplit, split_tasks  # noqa: E402
-from studio.config import Config, EditConfig, LoopConfig, PileConfig  # noqa: E402
+from studio.config import Config, EditConfig, GateConfig, LoopConfig, PileConfig  # noqa: E402
 from studio.harness import Harness  # noqa: E402
 from studio.parts import PartMap, PartType  # noqa: E402
 
@@ -99,6 +99,7 @@ def build(args) -> tuple[Harness, NexauBenchmark, Config, object]:
             wobble_runs=args.wobble_runs,
             strategies_per_round=args.strategies,
         ),
+        gate=GateConfig(borderline_extra_runs=args.borderline_runs),
         edits=EditConfig(budget_per_part=args.budget),
     )
     backend = None
@@ -149,6 +150,9 @@ def main() -> None:
     ap.add_argument("--segment-length", type=int, default=2, help="< rounds so the meta-loop fires")
     ap.add_argument("--strategies", type=int, default=2)
     ap.add_argument("--wobble-runs", type=int, default=2)
+    ap.add_argument("--borderline-runs", type=int, default=5,
+                    help="capped re-runs to resolve an in-band (borderline) gate "
+                         "decision; lower = much faster with a slow/noisy actor")
     ap.add_argument("--final", type=int, default=PILES.final_exam)
     ap.add_argument("--audit", type=int, default=PILES.audit)
     ap.add_argument("--judging", type=int, default=PILES.judging)
