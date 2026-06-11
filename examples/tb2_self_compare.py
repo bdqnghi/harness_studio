@@ -177,25 +177,27 @@ def run_cell(args) -> dict:
 
 
 def run_matrix(args) -> None:
-    """Fire the 4 cells as parallel subprocesses (gemini-key pair + openai-key pair)."""
-    procs = []
+    """Run the 4 cells in quota-clean WAVES: one harness at a time, its two
+    backbones in parallel (gemini-key + openai-key -> separate quotas, no 429
+    contention). gemini never runs two cells at once."""
+    Path(args.workspace).mkdir(parents=True, exist_ok=True)
     for harness in HARNESSES:
+        procs = []
         for backbone in BACKBONES:
             ws = Path(args.workspace) / f"{harness}_{backbone}".replace("/", "-")
             cmd = [sys.executable, __file__, "--harness", harness, "--backbone", backbone,
                    "--workspace", str(ws), "--task-cache", args.task_cache,
                    "--opt-k", str(args.opt_k), "--test-k", str(args.test_k),
                    "--rounds", str(args.rounds), "--n-concurrent", str(args.n_concurrent),
-                   "--borderline-runs", str(args.borderline_runs)]
+                   "--borderline-runs", str(args.borderline_runs), "--timeout-multiplier", str(args.timeout_multiplier)]
             if args.dry_run:
                 cmd.append("--dry-run")
             log = Path(args.workspace) / f"{harness}_{backbone}.log".replace("/", "-")
-            log.parent.mkdir(parents=True, exist_ok=True)
             procs.append((f"{harness}:{backbone}", subprocess.Popen(cmd, stdout=open(log, "w"), stderr=subprocess.STDOUT), log))
-            print(f"launched {harness}:{backbone} -> {log}")
-    for name, p, log in procs:
-        p.wait()
-        print(f"{name} exited rc={p.returncode}")
+            print(f"[wave {harness}] launched {harness}:{backbone} -> {log}", flush=True)
+        for name, p, log in procs:
+            p.wait()
+            print(f"[wave {harness}] {name} exited rc={p.returncode}", flush=True)
     # Collect the 2x2 lift table.
     print("\n=== 2x2 LIFT TABLE ===")
     for harness in HARNESSES:
