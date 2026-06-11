@@ -310,6 +310,7 @@ class Orchestrator:
     def _test_in_order(self, round_idx: int, strategies: list[Strategy]) -> None:
         gate = Gate(
             self.benchmark, self.split.judging, self.state.wobble,
+            gen_tasks=self.split.gen,  # dual-split when populated (choose_eval_plan); [] -> single-split
             borderline_extra_runs=self.config.gate.borderline_extra_runs,
         )
         last_note = "no strategy passed the gate"

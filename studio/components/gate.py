@@ -58,6 +58,7 @@ class GateDecision:
     borderline: bool = False
     runs_used: int = 1
     reason: str = ""
+    gen_gain: float = 0.0  # dual-split: gain on the generalization set (0 in single-split mode)
 
 
 def _mean(d: dict[str, float]) -> float:
@@ -71,14 +72,20 @@ class Gate:
         judging_tasks: list[str],
         wobble: float,
         *,
+        gen_tasks: list[str] | None = None,
         borderline_extra_runs: int = 5,
     ) -> None:
         self.benchmark = benchmark
         self.judging = list(judging_tasks)
+        # Dual-split (Self-Harness): a disjoint generalization set checked at every
+        # accept. None/empty -> single-split do-no-harm (legacy path).
+        self.gen = list(gen_tasks or [])
         self.wobble = max(0.0, wobble)
         self.extra = max(0, borderline_extra_runs)
 
     def evaluate(self, old: Harness, new: Harness, *, additive: bool = False) -> GateDecision:
+        if self.gen:
+            return self._evaluate_dual(old, new, additive=additive)
         if not self.judging:
             # No judging tasks = no evidence the edit is safe. Do-no-harm needs a
             # signal to clear; with none, stay conservative and reject.
@@ -142,4 +149,76 @@ class Gate:
             accept, avg_gain, _mean(old_s), _mean(new_s),
             regressed=avg_gain < 0, borderline=True, runs_used=1 + self.extra,
             reason=reason,
+        )
+
+    # --- dual-split (Self-Harness 2606.09498) -----------------------------------
+
+    def _gain_on(self, old, new, tasks, *, run_idx=0):
+        os_ = self.benchmark.run(old, tasks, run_idx=run_idx)
+        ns_ = self.benchmark.run(new, tasks, run_idx=run_idx)
+        return _mean(ns_) - _mean(os_), os_, ns_
+
+    def _accepts(self, gj: float, gg: float, *, additive: bool, tol: float = 0.0) -> bool:
+        """The dual-split acceptance rule.
+
+        Both splits must be non-regressing (within ``tol``). A behavioral edit
+        (it rewrites existing guidance) must ALSO strictly improve at least one
+        split — `max>0` (Self-Harness C2), so we don't accumulate neutral prose
+        churn. A strictly-additive edit may be neutral-on-both: it only *adds*
+        capability, so do-no-harm is enough to keep the latent surface."""
+        non_regress = (gj >= tol) and (gg >= tol)
+        if not non_regress:
+            return False
+        if additive:
+            return True
+        return max(gj, gg) > 0
+
+    def _evaluate_dual(self, old, new, *, additive: bool) -> GateDecision:
+        if not self.judging or not self.gen:
+            return GateDecision(False, 0.0, 0.0, 0.0,
+                                reason="dual-split needs both judging and gen")
+        gj, oj, nj = self._gain_on(old, new, self.judging)
+        gg, og, ng = self._gain_on(old, new, self.gen)
+        old_score, new_score = _mean(oj), _mean(nj)
+        gmin = min(gj, gg)
+
+        # Clear regression on either split -> reject.
+        if gmin < -self.wobble:
+            return GateDecision(False, gj, old_score, new_score, gen_gain=gg,
+                                regressed=True,
+                                reason=f"regresses a split (judging {gj:+.3f}, gen {gg:+.3f})")
+        # Clear decision when both splits are out of the noise band.
+        if gmin >= 0:
+            if self._accepts(gj, gg, additive=additive):
+                kind = "additive" if additive else "behavioral"
+                return GateDecision(True, gj, old_score, new_score, gen_gain=gg,
+                                    reason=f"dual-split ok ({kind}; judging {gj:+.3f}, gen {gg:+.3f})")
+            return GateDecision(False, gj, old_score, new_score, gen_gain=gg,
+                                reason=f"neutral on both splits, no strict gain (judging {gj:+.3f}, gen {gg:+.3f})")
+        # Borderline: at least one split in [-wobble, 0). Average out the noise.
+        return self._resolve_dual_borderline(old, new, oj, nj, og, ng, gj, gg, additive=additive)
+
+    def _resolve_dual_borderline(self, old, new, oj, nj, og, ng, gj, gg, *, additive) -> GateDecision:
+        def avg_gain(tasks, o0, n0):
+            contested = [t for t in tasks if o0[t] != n0[t]]
+            if not contested:
+                return _mean(n0) - _mean(o0)
+            oacc = {t: [o0[t]] for t in contested}
+            nacc = {t: [n0[t]] for t in contested}
+            for r in range(1, self.extra + 1):
+                o = self.benchmark.run(old, contested, run_idx=r)
+                n = self.benchmark.run(new, contested, run_idx=r)
+                for t in contested:
+                    oacc[t].append(o[t]); nacc[t].append(n[t])
+            diff = sum(sum(nacc[t]) / len(nacc[t]) - sum(oacc[t]) / len(oacc[t]) for t in contested)
+            return diff / len(tasks)
+
+        aj = avg_gain(self.judging, oj, nj)
+        ag = avg_gain(self.gen, og, ng)
+        tol = -self.wobble / 2 if additive else 0.0
+        accept = self._accepts(aj, ag, additive=additive, tol=tol)
+        return GateDecision(
+            accept, aj, _mean(oj), _mean(nj), gen_gain=ag,
+            regressed=min(aj, ag) < 0, borderline=True, runs_used=1 + self.extra,
+            reason=f"dual-split borderline resolved (judging {aj:+.3f}, gen {ag:+.3f}, tol {tol:+.3f})",
         )
