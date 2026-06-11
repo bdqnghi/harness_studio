@@ -73,30 +73,71 @@ def parse_dotenv(path: Path) -> dict[str, str]:
     return out
 
 
-def load_llm_env(ahe_dir: Path, model: str) -> dict[str, str]:
-    """Assemble the ``LLM_*`` env harbor's nexau agent needs, from AHE's .env.
+# nexau api_type + credential resolution per provider, so the SAME nexau path
+# can drive any backbone (gemini_rest for Gemini, openai_responses for GPT-5.x,
+# anthropic_chat_completion for Claude). The actor's code_agent.yaml reads
+# api_type from ${env.LLM_API_TYPE}.
+_PROVIDER_API_TYPE = {
+    "gemini": "gemini_rest",
+    "openai": "openai_responses",
+    "anthropic": "anthropic_chat_completion",
+}
+_PROVIDER_KEY_ENV = {
+    "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    "openai": ("OPENAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_API_KEY",),
+}
+# base_url env vars to consult PER PROVIDER — never let a global gemini
+# LLM_BASE_URL leak into an OpenAI/Anthropic run.
+_PROVIDER_BASE_ENV = {
+    "gemini": ("GEMINI_BASE_URL", "LLM_BASE_URL", "GPT54_LLM_BASE_URL"),
+    "openai": ("OPENAI_BASE_URL", "OPENAI_API_BASE"),
+    "anthropic": ("ANTHROPIC_BASE_URL",),
+}
+_PROVIDER_BASE_URL = {"gemini": "https://generativelanguage.googleapis.com"}
 
-    Preference order for key/base_url: explicit ``LLM_*`` in the current
-    environment, then AHE's ``.env`` ``LLM_API_KEY``/``LLM_BASE_URL`` (falling
-    back to the ``GPT54_LLM_*`` variants). ``LLM_MODEL`` is always ``model``.
+
+def provider_of(model: str) -> str:
+    m = model.lower()
+    if "claude" in m or "anthropic" in m:
+        return "anthropic"
+    if "gemini" in m or "google" in m:
+        return "gemini"
+    if any(x in m for x in ("gpt", "o1", "o3", "o4", "openai")):
+        return "openai"
+    return "openai"
+
+
+def api_type_for(model: str) -> str:
+    return _PROVIDER_API_TYPE.get(provider_of(model), "openai_chat_completion")
+
+
+def load_llm_env(ahe_dir: Path, model: str) -> dict[str, str]:
+    """Assemble the ``LLM_*`` env harbor's nexau agent needs, provider-aware.
+
+    The actor's provider is inferred from ``model``; its key is read from the
+    provider-native env var (e.g. ``GEMINI_API_KEY``/``OPENAI_API_KEY``), with the
+    legacy ``LLM_API_KEY``/``GPT54_LLM_*`` (in env or AHE's ``.env``) as fallback.
+    ``LLM_MODEL`` is always ``model`` and ``LLM_API_TYPE`` selects the nexau path.
     """
     env_file = parse_dotenv(Path(ahe_dir) / ".env")
+    prov = provider_of(model)
 
-    def pick(name: str) -> str:
-        gpt54 = f"GPT54_{name}"
-        return (
-            os.environ.get(name)
-            or env_file.get(name)
-            or env_file.get(gpt54)
-            or ""
-        )
+    def pick(*names: str) -> str:
+        for n in names:
+            v = os.environ.get(n) or env_file.get(n)
+            if v:
+                return v
+        return ""
 
-    out = {"LLM_MODEL": model}
-    api_key = pick("LLM_API_KEY")
-    base_url = pick("LLM_BASE_URL")
-    if api_key:
-        out["LLM_API_KEY"] = api_key
-        out["OPENAI_API_KEY"] = api_key  # nexau/openai_responses also reads this
+    out = {"LLM_MODEL": model, "LLM_API_TYPE": api_type_for(model)}
+    key = pick(*_PROVIDER_KEY_ENV.get(prov, ()), "LLM_API_KEY", "GPT54_LLM_API_KEY")
+    base_url = pick(*_PROVIDER_BASE_ENV.get(prov, ())) or _PROVIDER_BASE_URL.get(prov, "")
+    if key:
+        out["LLM_API_KEY"] = key
+        # also expose the provider-native var (nexau/litellm/openai_responses read it)
+        for n in _PROVIDER_KEY_ENV.get(prov, ("OPENAI_API_KEY",)):
+            out[n] = key
     if base_url:
         out["LLM_BASE_URL"] = base_url
     return out

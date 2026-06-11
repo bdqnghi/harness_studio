@@ -98,6 +98,7 @@ class Config:
             loop=LoopConfig(**data.get("loop", {})),
             edits=EditConfig(**data.get("edits", {})),
             health=HealthConfig(**data.get("health", {})),
+            eval_plan=EvalPlanConfig(**data.get("eval_plan", {})),
         )
 
     @classmethod
