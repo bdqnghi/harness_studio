@@ -245,7 +245,6 @@ def _carve_optimization(rest: list[str], *, n_val: int, n_gen: int, n_audit: int
     for representativeness. Heavy tasks (and leftover light) fall to practice
     (sampled mini-batches, so a heavy task rarely gates failure-finding)."""
     light = [t for t in rest if timeouts.get(t, 0.0) < heavy_sec]
-    heavy = [t for t in rest if timeouts.get(t, 0.0) >= heavy_sec]
     avail = list(light)
     judging = _stratified_sample(avail, n_val, strata, seed + 1)
     taken = set(judging)
@@ -253,7 +252,11 @@ def _carve_optimization(rest: list[str], *, n_val: int, n_gen: int, n_audit: int
     taken |= set(gen)
     audit = _stratified_sample([t for t in avail if t not in taken], n_audit, strata, seed + 3)
     taken |= set(audit)
-    practice = [t for t in rest if t not in taken]  # leftover light + all heavy
+    # Practice = LIGHT leftover only. Heavy tasks are excluded from optimization
+    # entirely (a single build-pov-ray draw would stall a round); under CV every
+    # heavy is still scored as a test task in its own fold, so none are dropped
+    # from the verdict.
+    practice = [t for t in light if t not in taken]
     return TaskSplit(practice=practice, judging=judging, audit=audit,
                      final_exam=[], gen=gen)
 

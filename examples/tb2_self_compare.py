@@ -133,10 +133,17 @@ def run_cell(args) -> dict:
 
     from studio.orchestrator import Orchestrator
 
-    # 1. Calibrate the baseline once at opt_k (per-task difficulty + sigma2).
-    cal = calibrate(opt_bench, src, tasks, k=args.opt_k, runtimes=timeouts, model=args.backbone)
-    print(f"calibrated: sigma2={cal.sigma2:.3f} baseline mean p={statistics.mean(cal.difficulties().values()):.3f}")
-    plan = choose_eval_plan(tasks, sigma2=cal.sigma2, difficulties=cal.difficulties(),
+    # 1. Calibrate the baseline at opt_k on the LIGHT tasks only (heavies would
+    #    stall it for hours and are excluded from optimization anyway; their
+    #    baseline is measured in the k=3 verdict pass). Heavies keep metadata
+    #    difficulty for test-set stratification.
+    light_tasks = [t for t in tasks if timeouts.get(t, 0.0) < args.heavy_sec]
+    cal = calibrate(opt_bench, src, light_tasks, k=args.opt_k, runtimes=timeouts, model=args.backbone)
+    diffs = dict(diffs_meta)
+    diffs.update(cal.difficulties())  # calibrated lights override the metadata prior
+    print(f"calibrated {len(light_tasks)} light tasks: sigma2={cal.sigma2:.3f} "
+          f"baseline mean p={statistics.mean(cal.difficulties().values()):.3f}")
+    plan = choose_eval_plan(tasks, sigma2=cal.sigma2, difficulties=diffs,
                             timeouts=timeouts, seed=args.seed, k=args.test_k,
                             delta_step=args.delta_step, delta_final=args.delta_final,
                             val_budget_cap=args.val_budget_cap, heavy_sec=args.heavy_sec,
