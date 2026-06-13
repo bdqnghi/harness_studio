@@ -28,17 +28,30 @@ class MockBackend(Backend):
         self,
         json_responses: dict[str, list] | None = None,
         agent_actions: dict[str, list[AgentAction]] | None = None,
+        explore_responses: dict[str, list] | None = None,
     ) -> None:
         # Copy so callers can reuse their script dicts across backends.
         self._json = {k: list(v) for k, v in (json_responses or {}).items()}
         self._actions = {k: list(v) for k, v in (agent_actions or {}).items()}
+        self._explore = {k: list(v) for k, v in (explore_responses or {}).items()}
         self.calls: list[tuple[str, str]] = []  # (kind, tag) call log
+        self.prompt_log: list[tuple[str, str]] = []  # (tag, prompt/instruction text)
 
     def prompt_json(self, prompt, schema, *, tag="", model=None):
         self.calls.append(("prompt_json", tag))
+        self.prompt_log.append((tag, prompt))
         queue = self._json.get(tag)
         if not queue:
             raise AssertionError(f"MockBackend: no scripted JSON for tag {tag!r}")
+        return queue.pop(0)
+
+    def run_explore(self, instruction, *, read_dirs, schema, tag="",
+                    model=None, max_turns=None):
+        self.calls.append(("run_explore", tag))
+        self.prompt_log.append((tag, instruction))
+        queue = self._explore.get(tag)
+        if not queue:
+            raise AssertionError(f"MockBackend: no scripted explore response for tag {tag!r}")
         return queue.pop(0)
 
     def run_agent(
@@ -53,6 +66,7 @@ class MockBackend(Backend):
         timeout=1800,
     ):
         self.calls.append(("run_agent", tag))
+        self.prompt_log.append((tag, instruction))
         queue = self._actions.get(tag)
         if not queue:
             raise AssertionError(f"MockBackend: no scripted action for tag {tag!r}")

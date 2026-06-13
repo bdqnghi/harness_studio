@@ -78,7 +78,11 @@ def validate(data: Any, schema: dict, _path: str = "$") -> None:
 
 # --- Concrete schemas (filled in as each helper is added per milestone) ---
 
-# Diagnoser (§5.2): cluster failures into causes, blame a part.
+# Diagnoser (§5.2): cluster failures into causes, blame a part. The signature
+# triple (verifier_cause, agent_mechanism, addressable) follows Self-Harness
+# (2606.09498): structure lives on the *failure*, not the edit. The fields are
+# optional in the schema (a model omitting them must not fail the round);
+# ``diagnoser.diagnose`` default-fills them so downstream code can rely on them.
 DIAGNOSIS = {
     "type": "array",
     "items": {
@@ -92,6 +96,9 @@ DIAGNOSIS = {
             "failing_task_ids": {"type": "array", "items": {"type": "string"}},
             "blamed_part": {"type": "string"},
             "confidence": {"type": "number"},
+            "verifier_cause": {"type": "string"},    # what the verifier observed
+            "agent_mechanism": {"type": "string"},   # what the agent did to cause it
+            "addressable": {"type": "boolean"},      # fixable by editing the harness?
         },
     },
 }
@@ -147,4 +154,127 @@ RANKING = {
     "additionalProperties": False,
     "required": ["order"],
     "properties": {"order": {"type": "array", "items": {"type": "string"}}},
+}
+
+# Direction router (tree optimizer): assign each failure pattern to an existing
+# direction node or propose a new one ("" direction_id => create new).
+DIRECTION_ASSIGN = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["assignments"],
+    "properties": {
+        "assignments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["pattern_id", "direction_id"],
+                "properties": {
+                    "pattern_id": {"type": "string"},
+                    "direction_id": {"type": "string"},
+                    "new_title": {"type": "string"},
+                    "new_mechanism": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+# Ideator (tree optimizer): k cheap text hypotheses under a direction — the
+# Arbor Mechanism/Hypothesis/Observable/Conflicts discipline.
+HYPOTHESES = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["hypotheses"],
+    "properties": {
+        "hypotheses": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["title", "mechanism", "hypothesis", "observable"],
+                "properties": {
+                    "title": {"type": "string"},
+                    "mechanism": {"type": "string"},
+                    "hypothesis": {"type": "string"},
+                    "observable": {"type": "string"},
+                    "conflicts": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+# Insight distiller (tree optimizer): the <=200-word lesson from one test.
+INSIGHT = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["insight"],
+    "properties": {"insight": {"type": "string"}},
+}
+
+# Localization: evidence-grounded, span/rule-level edit targets (components/
+# localizer.py). Each target names the editable file + the span to change and
+# cites the exact evidence (transcript quote) and current harness text. The
+# orchestrator validates current_text / quotes are real substrings before trust.
+LOCALIZATION = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["targets"],
+    "properties": {
+        "targets": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["pattern_id", "target_file", "evidence"],
+                "properties": {
+                    "pattern_id": {"type": "string"},
+                    "target_file": {"type": "string"},
+                    "target_locator": {"type": "string"},   # "lines 40-52" or a rule/section
+                    "current_text": {"type": "string"},      # exact span to change (read-before-act)
+                    "change_kind": {"type": "string"},        # modify_rule|add_rule|fix_code|add_tool|...
+                    "rationale": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "evidence": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["task_id", "quote"],
+                            "properties": {
+                                "task_id": {"type": "string"},
+                                "signal": {"type": "string"},
+                                "quote": {"type": "string"},
+                                "msg_range": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
+# Cold-start synthesis: fill a minimal agent template from a ColdStartBrief.
+COLD_START = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["system_prompt", "tool_notes"],
+    "properties": {
+        "system_prompt": {"type": "string"},   # the initial agent system prompt
+        "tool_notes": {                          # one usage note per available tool
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["name", "note"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "note": {"type": "string"},
+                },
+            },
+        },
+        "loop_guidance": {"type": "string"},     # optional: how to plan/iterate/stop
+    },
 }

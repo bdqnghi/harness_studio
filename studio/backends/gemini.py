@@ -101,6 +101,8 @@ TOOL_SCHEMAS = [
         "parameters": {"type": "object", "properties": {
             "pattern": {"type": "string"},
             "path": {"type": "string", "description": "subdir to search (optional)"},
+            "context": {"type": "integer", "description": "lines of context around each match (optional)"},
+            "head_limit": {"type": "integer", "description": "max matches to return (default 200)"},
         }, "required": ["pattern"]},
     }},
     {"type": "function", "function": {
@@ -123,6 +125,34 @@ Rules:
 - Keep the harness valid and bootable: never break YAML/JSON/Python syntax. If you add a tool/middleware, register it where the harness expects.
 - Only edit files inside the workspace, and never edit any file listed as do-not-touch in the instruction.
 - When your edits are written, call complete_task with a one-paragraph summary of what you changed and why. Do not call complete_task before writing your edits."""
+
+
+# Read-only "explore" loop (the localizer's Explore-subagent analog). Same tool
+# loop as run_agent but NO write/edit tools, and it terminates by calling
+# submit_findings with a JSON conclusion validated against a caller schema.
+_READONLY_TOOL_NAMES = {"read_file", "list_dir", "grep"}
+SUBMIT_FINDINGS_SCHEMA = {"type": "function", "function": {
+    "name": "submit_findings",
+    "description": "Call this once you have located the cause. Provide your conclusion "
+                   "as JSON in `findings`, matching the schema the caller requested. "
+                   "Every quote/current_text you cite MUST be copied verbatim from a "
+                   "file you actually read — do not paraphrase or invent.",
+    "parameters": {"type": "object", "properties": {
+        "findings": {"type": "object", "description": "the JSON conclusion"},
+    }, "required": ["findings"]},
+}}
+READONLY_TOOL_SCHEMAS = [t for t in TOOL_SCHEMAS
+                         if t["function"]["name"] in _READONLY_TOOL_NAMES] + [SUBMIT_FINDINGS_SCHEMA]
+
+EXPLORE_PREAMBLE = """You are a localization specialist for an AI-agent harness optimizer. You investigate WHY benchmark tasks failed and pinpoint exactly what to change.
+
+Read-only directories you may inspect: {read_dirs}
+
+You CANNOT modify anything — you have only read_file, list_dir, and grep. Your job:
+- Read the failure evidence (the verifier's failed checks + the causal transcript windows) and the editable harness files.
+- Localize the cause to a specific span/rule of a specific editable file — not just "the instructions".
+- Cite your evidence: quote the exact transcript text and the exact current harness text you would change (copied verbatim from what you read).
+- Then call submit_findings with the JSON conclusion. Be fast and use parallel tool calls where possible."""
 
 
 def _cap(s: str, n: int) -> str:
@@ -357,6 +387,67 @@ class GeminiBackend(Backend):
             raw={"turns": turns, "prompt_tokens": dp, "completion_tokens": dc, "tag": tag},
         )
 
+    # --- Tier B (agentic): read-only exploration that returns a JSON conclusion ---
+
+    def run_explore(self, instruction, *, read_dirs, schema, tag="",
+                    model=None, max_turns=None):
+        from .. import schemas as _schemas
+
+        roots = [Path(d).resolve() for d in (read_dirs or [])]
+        if not roots:
+            raise GeminiBackendError("run_explore requires at least one read_dir")
+        messages = [
+            {"role": "system",
+             "content": EXPLORE_PREAMBLE.format(read_dirs=", ".join(str(d) for d in roots))},
+            {"role": "user", "content": instruction},
+        ]
+        limit = max_turns or self.max_turns
+        last_err = None
+        for _turn in range(limit):
+            resp = self._complete(messages, model=model or self.tier_b_model,
+                                  tools=READONLY_TOOL_SCHEMAS, tag=tag)
+            msg = resp.choices[0].message
+            messages.append(_assistant_dict(msg))
+            if not msg.tool_calls:
+                messages.append({"role": "user",
+                                 "content": "Call submit_findings with your JSON conclusion."})
+                continue
+            for tc in msg.tool_calls:
+                name = tc.function.name
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                if name == "submit_findings":
+                    payload = args.get("findings", args)
+                    try:
+                        _schemas.validate(payload, schema)
+                        return payload
+                    except _schemas.SchemaError as e:
+                        last_err = e
+                        result = (f"ERROR: findings did not match the schema: {e}. "
+                                  "Fix and call submit_findings again.")
+                else:
+                    try:
+                        result = self._dispatch_readonly(name, args, roots)
+                    except ToolError as e:
+                        result = f"ERROR: {e}"
+                    except Exception as e:  # noqa: BLE001
+                        result = f"ERROR: {type(e).__name__}: {e}"
+                messages.append({"role": "tool", "tool_call_id": tc.id,
+                                 "content": _cap(result, MAX_TOOL_OUTPUT)})
+        raise GeminiBackendError(
+            f"run_explore did not submit valid findings (tag={tag}): {last_err}")
+
+    def _dispatch_readonly(self, name, args, roots) -> str:
+        if name == "read_file":
+            return self._read_file(args, roots)
+        if name == "list_dir":
+            return self._list_dir(args, roots)
+        if name == "grep":
+            return self._grep(args, roots)
+        raise ToolError(f"tool {name!r} is not available in read-only mode")
+
     # --- tool dispatch (workspace-jailed) ---
 
     def _dispatch(self, name, args, workspace, roots) -> str:
@@ -433,17 +524,29 @@ class GeminiBackend(Backend):
             rx = _re.compile(args["pattern"])
         except _re.error as e:
             raise ToolError(f"bad regex: {e}")
+        # Optional ripgrep-style context lines (-C) and a head_limit, so the
+        # explorer can pull the surrounding rule/code around a match.
+        context = max(0, int(args.get("context", 0) or 0))
+        head_limit = int(args.get("head_limit", 200) or 200)
         hits, root = [], (base if base.is_dir() else base.parent)
         files = base.rglob("*") if base.is_dir() else [base]
         for p in sorted(files):
             if not p.is_file() or any(x in p.parts for x in ("__pycache__", ".git", ".pytest_cache")):
                 continue
             try:
-                for i, ln in enumerate(p.read_text(errors="replace").splitlines(), 1):
-                    if rx.search(ln):
-                        hits.append(f"{p.relative_to(root)}:{i}: {ln.strip()[:200]}")
-                        if len(hits) >= 200:
-                            return "\n".join(hits) + "\n... [more matches truncated]"
+                lines = p.read_text(errors="replace").splitlines()
             except OSError:
                 continue
+            rel = p.relative_to(root)
+            for i, ln in enumerate(lines, 1):
+                if rx.search(ln):
+                    if context:
+                        lo, hi = max(1, i - context), min(len(lines), i + context)
+                        block = "\n".join(f"{rel}:{j}: {lines[j - 1].rstrip()[:200]}"
+                                          for j in range(lo, hi + 1))
+                        hits.append(block)
+                    else:
+                        hits.append(f"{rel}:{i}: {ln.strip()[:200]}")
+                    if len(hits) >= head_limit:
+                        return "\n".join(hits) + "\n... [more matches truncated]"
         return "\n".join(hits) or "(no matches)"

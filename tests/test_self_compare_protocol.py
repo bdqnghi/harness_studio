@@ -63,6 +63,11 @@ def _args(tmp_path):
         baseline_score=None,
         baseline_json=None,
         baseline_sigma2=None,
+        optimizer="classic",
+        hypotheses=4,
+        score_cache=None,
+        calibrate_only=False,
+        baseline_out=None,
     )
 
 
@@ -188,6 +193,8 @@ def test_locked_tasks_stay_outside_optimizer_and_live_harness_is_graded(
 
 def test_matrix_child_command_forwards_protocol_options(tmp_path):
     args = _args(tmp_path)
+    args.optimizer = "tree"
+    args.score_cache = str(tmp_path / "scores.jsonl")
     cmd = compare._matrix_child_cmd(
         args, harness="mini-swe", backbone="gpt-5.4",
         workspace=tmp_path / "cell",
@@ -195,5 +202,44 @@ def test_matrix_child_command_forwards_protocol_options(tmp_path):
     for flag in (
         "--tasks", "--ahe-dir", "--calibration-k", "--segment-length",
         "--strategies", "--wobble-runs", "--budget", "--seed", "--heavy-sec",
+        "--optimizer", "--hypotheses", "--score-cache",
     ):
         assert flag in cmd
+    assert cmd[cmd.index("--optimizer") + 1] == "tree"
+
+
+def test_cell_config_routes_optimizer_and_score_cache(tmp_path):
+    args = _args(tmp_path)
+    args.optimizer = "tree"
+    args.hypotheses = 2
+    split = TaskSplit(practice=["p"], judging=["j"], regression=["r"],
+                      audit=["a"], final_exam=[])
+    cfg = compare._cell_config(split, seed=3, args=args,
+                               score_cache=str(tmp_path / "scores.jsonl"))
+    assert cfg.loop.optimizer == "tree"
+    assert cfg.loop.hypotheses_per_direction == 2
+    assert cfg.score_cache == str(tmp_path / "scores.jsonl")
+    assert cfg.seed == 3
+
+
+def test_provided_baseline_accepts_baseline_out_export(tmp_path):
+    """The --baseline-out export ({rates, sigma2, ...}) feeds straight back into
+    --baseline-json — the calibrate-once-feed-both-arms flow."""
+    args = _args(tmp_path)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps({
+        "rates": {"held": 0.4, "locked": 1.0},
+        "sigma2": 0.18, "model": "gemini/gemini-3.5-flash",
+        "calibration_k": 3, "baseline_hash": "abc",
+    }))
+    args.baseline_json = str(baseline)
+
+    cal = compare._provided_baseline(args, ["held"], {"held": 10.0})
+    assert set(cal.stats) == {"held"}
+    assert cal.stats["held"].p == 0.4
+    assert cal.sigma2 == 0.18  # the exported sigma2 is adopted
+
+    # An explicit --baseline-sigma2 still overrides the exported one.
+    args.baseline_sigma2 = 0.22
+    cal2 = compare._provided_baseline(args, ["held"], {"held": 10.0})
+    assert cal2.sigma2 == 0.22

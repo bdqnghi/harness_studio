@@ -75,3 +75,60 @@ def test_single_split_mode_unchanged(tmp_path):
     old = _h(tmp_path, "old")
     new = _h(tmp_path, "new", toy_fixes.enable_upper)
     assert gate.evaluate(old, new).accept
+
+
+# --- aggregate-accept mode (opt-in): pooled held-in gain vs per-slice do-no-harm ---
+
+def test_aggregate_accept_captures_gain_the_dual_gate_rejects(tmp_path):
+    """The exact tau2 cold-start failure: an edit helps the regression slice a
+    lot but nudges judging slightly negative (within the wobble band). The
+    strict per-slice dual gate REJECTS it (judging 'regressed'); aggregate mode
+    ACCEPTS it because the pooled held-in gain is clearly positive."""
+    from studio.benchmark.base import Benchmark
+    from studio.components.gate import Gate
+    from studio.harness import Harness
+
+    class _Bench(Benchmark):
+        def list_tasks(self): return ["j1", "j2", "r1", "r2"]
+        def run(self, harness, task_ids, *, run_idx=0):
+            new = "new" in harness.root.name
+            # old: j1=1 j2=1 r1=0 r2=0 | new: j1=1 j2=0.8 (judging -0.1), r1=1 r2=1 (regression +1.0)
+            old_s = {"j1": 1.0, "j2": 1.0, "r1": 0.0, "r2": 0.0}
+            new_s = {"j1": 1.0, "j2": 0.8, "r1": 1.0, "r2": 1.0}
+            src = new_s if new else old_s
+            return {t: src[t] for t in task_ids}
+
+    old = Harness(tmp_path / "old"); (tmp_path / "old").mkdir(); old.write_file("p", "x")
+    new = Harness(tmp_path / "new"); (tmp_path / "new").mkdir(); new.write_file("p", "y")
+    b = _Bench()
+    judging, regression = ["j1", "j2"], ["r1", "r2"]
+    WOBBLE = 0.2  # judging -0.1 sits inside the band; pooled +0.45 clears it
+
+    # strict dual gate REJECTS: judging gain -0.1 fails per-slice non-regression.
+    d_strict = Gate(b, judging, WOBBLE, regression_tasks=regression,
+                    borderline_extra_runs=0).evaluate(old, new)
+    assert d_strict.accept is False
+
+    # aggregate gate ACCEPTS: pooled gain (1+0.8+1+1)/4 - (1+1+0+0)/4 = +0.45 > wobble.
+    d_agg = Gate(b, judging, WOBBLE, regression_tasks=regression,
+                 borderline_extra_runs=0, aggregate_accept=True).evaluate(old, new)
+    assert d_agg.accept is True and d_agg.gain > WOBBLE
+
+
+def test_aggregate_accept_still_rejects_real_regression(tmp_path):
+    """Aggregate mode must still reject an edit that hurts the pool overall."""
+    from studio.benchmark.base import Benchmark
+    from studio.components.gate import Gate
+    from studio.harness import Harness
+
+    class _Bench(Benchmark):
+        def list_tasks(self): return ["j1", "r1"]
+        def run(self, harness, task_ids, *, run_idx=0):
+            new = "new" in harness.root.name
+            return {t: (0.0 if new else 1.0) for t in task_ids}  # new is worse everywhere
+
+    old = Harness(tmp_path / "old"); (tmp_path / "old").mkdir(); old.write_file("p", "x")
+    new = Harness(tmp_path / "new"); (tmp_path / "new").mkdir(); new.write_file("p", "y")
+    agg = Gate(_Bench(), ["j1"], 0.0, regression_tasks=["r1"], aggregate_accept=True)
+    d = agg.evaluate(old, new)
+    assert d.accept is False and d.regressed is True

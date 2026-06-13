@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from studio.backends.factory import make_backend  # noqa: E402
+from studio.benchmark.instrument import InstrumentedBenchmark  # noqa: E402
 from studio.components.calibration import (  # noqa: E402
     DEFAULT_TASK_CACHE, Calibration, TaskStat, calibrate, compute_sigma2,
     read_difficulty_meta, read_task_timeouts,
@@ -111,7 +112,8 @@ def resolve_backbone(args) -> BackboneSpec:
 
 
 def make_target(harness: str, spec: BackboneSpec, *, real: bool, k: int,
-                n_concurrent: int, timeout_multiplier: float, ahe_dir: Path):
+                n_concurrent: int, timeout_multiplier: float, ahe_dir: Path,
+                source_harness: Path | None = None):
     """Return (benchmark, source_harness, part_map, proposer_model)."""
     if harness == "nexau":
         from studio.benchmark.nexau import NexauBenchmark
@@ -119,21 +121,26 @@ def make_target(harness: str, spec: BackboneSpec, *, real: bool, k: int,
         bench = NexauBenchmark(real=real, ahe_dir=ahe_dir, model=spec.nexau_model,
                                provider=spec.provider,
                                k=k, n_concurrent=n_concurrent, timeout_multiplier=timeout_multiplier)
-        return bench, Harness(ahe_dir / "agents" / "code_agent_simple"), nexau_part_map(), spec.litellm_model
+        src = Harness(Path(source_harness)) if source_harness else Harness(
+            ahe_dir / "agents" / "code_agent_simple")
+        return bench, src, nexau_part_map(), spec.litellm_model
     from studio.benchmark.mini_swe import MiniSweBenchmark, mini_swe_part_map
     bench = MiniSweBenchmark(real=real, ahe_dir=ahe_dir, model=spec.litellm_model,
                              k=k, n_concurrent=n_concurrent, timeout_multiplier=timeout_multiplier)
     return bench, Harness(MINISWE_HARNESS), mini_swe_part_map(), spec.litellm_model
 
 
-def _cell_config(split, *, seed, args) -> Config:
+def _cell_config(split, *, seed, args, score_cache: str = "") -> Config:
     return Config(
         seed=seed,
+        score_cache=score_cache,
         piles=PileConfig(practice=min(args.round_size, max(1, len(split.practice))),
                          judging=len(split.judging), audit=len(split.audit),
                          final_exam=len(split.final_exam)),
         loop=LoopConfig(rounds=args.rounds, segment_length=args.segment_length,
-                        wobble_runs=args.wobble_runs, strategies_per_round=args.strategies),
+                        wobble_runs=args.wobble_runs, strategies_per_round=args.strategies,
+                        optimizer=args.optimizer,
+                        hypotheses_per_direction=args.hypotheses),
         gate=GateConfig(borderline_extra_runs=args.borderline_runs),
         edits=EditConfig(budget_per_part=args.budget),
     )
@@ -145,8 +152,16 @@ def _provided_baseline(args, calibration_tasks, timeouts) -> Calibration:
     Only the already-frozen held-in calibration tasks are consumed. Extra JSON
     entries (including future locked tasks) are intentionally ignored.
     """
+    file_sigma2 = None
     if args.baseline_json:
         data = json.loads(Path(args.baseline_json).read_text())
+        # Accept both the plain {task: rate} form and the --baseline-out export
+        # ({"rates": {...}, "sigma2": ...}), so calibrate-once-feed-both-arms
+        # needs no manual surgery on the file.
+        if isinstance(data, dict) and isinstance(data.get("rates"), dict):
+            if isinstance(data.get("sigma2"), (int, float)):
+                file_sigma2 = float(data["sigma2"])
+            data = data["rates"]
         if not isinstance(data, dict):
             raise ValueError("--baseline-json must contain an object {task: rate}")
         missing = [t for t in calibration_tasks if t not in data]
@@ -167,10 +182,11 @@ def _provided_baseline(args, calibration_tasks, timeouts) -> Calibration:
         p_by = {t: float(args.baseline_score) for t in calibration_tasks}
     if any(not 0.0 <= p <= 1.0 for p in p_by.values()):
         raise ValueError("provided baseline rates must be in [0, 1]")
-    if args.baseline_sigma2 is not None:
-        if not 0.01 <= args.baseline_sigma2 <= 0.25:
+    provided_sigma2 = args.baseline_sigma2 if args.baseline_sigma2 is not None else file_sigma2
+    if provided_sigma2 is not None:
+        if not 0.01 <= provided_sigma2 <= 0.25:
             raise ValueError("--baseline-sigma2 must be in [0.01, 0.25]")
-        sigma2 = float(args.baseline_sigma2)
+        sigma2 = float(provided_sigma2)
     else:
         if p_by and all(p in (0.0, 1.0) for p in p_by.values()):
             raise ValueError(
@@ -198,23 +214,36 @@ def run_cell(args) -> dict:
     diffs_meta = read_difficulty_meta(tasks, cache=Path(args.task_cache))
     # Gate/optimize at opt_k (cheap, robust via the dual-split gate); score the
     # VERDICT at test_k (trustworthy). The heavy TB2 tasks make all-k=3 brutal.
+    src_override = getattr(args, "source_harness", None)
     opt_bench, src, part_map, proposer_model = make_target(
         args.harness, spec, real=not args.dry_run, k=args.opt_k,
         n_concurrent=args.n_concurrent, timeout_multiplier=args.timeout_multiplier,
-        ahe_dir=Path(args.ahe_dir))
+        ahe_dir=Path(args.ahe_dir), source_harness=src_override)
     calibration_bench, _, _, _ = make_target(
         args.harness, spec, real=not args.dry_run, k=args.calibration_k,
         n_concurrent=args.n_concurrent, timeout_multiplier=args.timeout_multiplier,
-        ahe_dir=Path(args.ahe_dir))
+        ahe_dir=Path(args.ahe_dir), source_harness=src_override)
     test_bench, _, _, _ = make_target(
         args.harness, spec, real=not args.dry_run, k=args.test_k,
         n_concurrent=args.n_concurrent, timeout_multiplier=args.timeout_multiplier,
-        ahe_dir=Path(args.ahe_dir))
+        ahe_dir=Path(args.ahe_dir), source_harness=src_override)
+
+    ws = Path(args.workspace)
+    # One disk-backed score store for ALL benches (namespaced by k/model inside
+    # InstrumentedBenchmark): calibration, the optimizer, and the verdict share
+    # it, so a second arm over the same baseline pays no repeat rollouts, and
+    # the verdict path gets the same caching + reward-hack guard as the gate.
+    score_cache = Path(args.score_cache) if args.score_cache else ws / "score_cache.jsonl"
+    if not args.dry_run:
+        calibration_bench = InstrumentedBenchmark(calibration_bench, disk_path=score_cache)
+        test_bench = InstrumentedBenchmark(test_bench, disk_path=score_cache)
 
     print(f"=== self-harness cell: harness={args.harness} backbone={cell_name} ===")
     print(f"actor=proposer model: {proposer_model} | tasks N={len(tasks)} | "
           f"calibration_k={args.calibration_k} opt_k={args.opt_k} "
           f"test_k={args.test_k} round_size={args.round_size}")
+    print(f"optimizer={args.optimizer} | score-cache={score_cache}")
+    print(f"observe: tail -f {ws / 'progress.jsonl'}")
 
     # --- step 0: choose the split without touching future locked tasks ---
     provided = bool(args.baseline_json) or args.baseline_score is not None
@@ -277,6 +306,18 @@ def run_cell(args) -> dict:
             f"sigma2={sigma2:.3f}, mean p="
             f"{statistics.mean(cal.difficulties().values()):.3f}"
         )
+        if args.baseline_out or args.calibrate_only:
+            out_path = Path(args.baseline_out) if args.baseline_out else ws / "baseline.json"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps({
+                "rates": cal.difficulties(), "sigma2": cal.sigma2,
+                "model": cal.model, "calibration_k": args.calibration_k,
+                "baseline_hash": cal.baseline_hash,
+            }, indent=2))
+            print(f"baseline exported -> {out_path} (feed it back via --baseline-json)")
+            if args.calibrate_only:
+                return {"cell": f"{args.harness}:{cell_name}", "calibrate_only": True,
+                        "sigma2": round(sigma2, 4), "baseline_out": str(out_path)}
     plan = replace(
         plan,
         sigma2=sigma2,
@@ -302,11 +343,11 @@ def run_cell(args) -> dict:
     from studio.orchestrator import Orchestrator
 
     # --- step 2: optimize on the held-in pool (gated by pool + regression) ---
-    ws = Path(args.workspace)
     # The optimizer never receives locked task ids. Only the external verdict
     # below can access them.
     optimization_split = replace(split, final_exam=[])
-    cfg = _cell_config(optimization_split, seed=args.seed, args=args)
+    cfg = _cell_config(optimization_split, seed=args.seed, args=args,
+                       score_cache=str(score_cache))
     orch = Orchestrator(workspace=ws, source_harness=src, benchmark=opt_bench,
                         backend=make_backend(proposer_model, log_dir=ws / "proposer-logs"),
                         config=cfg, part_map=part_map, split=optimization_split)
@@ -361,7 +402,11 @@ def _matrix_child_cmd(args, *, harness: str, backbone: str, workspace: Path) -> 
         "--test-floor", str(args.test_floor),
         "--test-budget-cap", str(args.test_budget_cap),
         "--heavy-sec", str(args.heavy_sec),
+        "--optimizer", args.optimizer,
+        "--hypotheses", str(args.hypotheses),
     ]
+    if args.score_cache:
+        cmd += ["--score-cache", args.score_cache]
     if args.tasks:
         cmd += ["--tasks", args.tasks]
     if args.baseline_score is not None:
@@ -429,6 +474,21 @@ def main() -> None:
                     help="custom single-cell model name (use with --provider)")
     ap.add_argument("--matrix", action="store_true", help="run the full 2x2 in parallel")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--optimizer", choices=("classic", "tree"), default="classic",
+                    help="optimizer arm: classic propose-n loop or the hypothesis tree")
+    ap.add_argument("--hypotheses", type=int, default=4,
+                    help="tree: text hypotheses per ideation call")
+    ap.add_argument("--score-cache", default=None,
+                    help="disk score-cache JSONL shared across runs "
+                         "(default: <workspace>/score_cache.jsonl)")
+    ap.add_argument("--calibrate-only", action="store_true",
+                    help="measure + export the baseline calibration, then exit")
+    ap.add_argument("--baseline-out", default=None,
+                    help="where to write the measured calibration JSON "
+                         "(default with --calibrate-only: <workspace>/baseline.json)")
+    ap.add_argument("--source-harness", default=None,
+                    help="override the source harness directory (e.g. a per-lane "
+                         "copy with the provider api_type baked in)")
     ap.add_argument("--tasks", default=None, help="comma-sep task ids (default: all cached)")
     ap.add_argument("--task-cache", default=str(DEFAULT_TASK_CACHE))
     ap.add_argument("--ahe-dir", default=str(DEFAULT_AHE_DIR))
@@ -474,6 +534,12 @@ def main() -> None:
         ap.error("use only one of --baseline-json and --baseline-score")
     if args.baseline_score is not None and args.baseline_sigma2 is None:
         ap.error("--baseline-score requires --baseline-sigma2")
+    if args.calibrate_only and (args.baseline_json or args.baseline_score is not None):
+        ap.error("--calibrate-only measures the baseline; do not also provide one")
+    if args.calibrate_only and (args.dry_run or args.matrix):
+        ap.error("--calibrate-only is a single-cell, real-run operation")
+    if args.hypotheses < 1:
+        ap.error("--hypotheses must be positive")
     if args.matrix:
         run_matrix(args)
     else:

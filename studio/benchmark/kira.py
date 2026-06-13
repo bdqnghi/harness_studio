@@ -64,19 +64,22 @@ def parse_harbor_results(jobs_dir: Path, task_ids: list[str]) -> dict[str, float
 
 
 def require_complete_harbor_results(
-    jobs_dir: Path, task_ids: list[str], *, expected_trials: int
+    jobs_dir: Path, task_ids: list[str], *, expected_trials: int, min_trials: int = 1
 ) -> dict[str, float]:
-    """Reject missing trials instead of silently turning infrastructure loss into 0."""
+    """Score a batch, failing closed only on genuinely missing *tasks*.
+
+    A task with zero valid trials is real infrastructure loss (build failure,
+    all trials crashed) and must not be silently scored 0 — that fails closed.
+    But a task that produced ``min_trials..expected_trials-1`` trials lost only
+    a *trial* to a timeout/flake; we average the trials it did produce rather
+    than nuke a multi-hour run over one missing rollout. ``min_trials`` (default
+    1) is the floor below which a task counts as missing.
+    """
     scores, counts = parse_harbor_result_details(jobs_dir, task_ids)
-    incomplete = {
-        task_id: count
-        for task_id, count in counts.items()
-        if count < expected_trials
-    }
-    if incomplete:
+    missing = {t: c for t, c in counts.items() if c < min_trials}
+    if missing:
         detail = ", ".join(
-            f"{task_id}={count}/{expected_trials}"
-            for task_id, count in sorted(incomplete.items())
+            f"{t}={c}/{expected_trials}" for t, c in sorted(missing.items())
         )
         raise BenchmarkExecutionError(f"incomplete Harbor results: {detail}")
     return scores

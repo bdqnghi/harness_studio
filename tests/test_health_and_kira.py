@@ -49,11 +49,30 @@ def test_parse_harbor_results_averages_trials(tmp_path):
     assert scores["taskA"] == 0.5
 
 
-def test_complete_harbor_results_reject_missing_trials(tmp_path):
-    _write(tmp_path / "taskA__0/verifier/reward.txt", "1.0")
-    with pytest.raises(kira.BenchmarkExecutionError, match="taskA=1/2"):
+def test_complete_harbor_results_reject_missing_task(tmp_path):
+    # taskA has no trials at all -> genuinely missing -> fail closed.
+    _write(tmp_path / "taskB__0/verifier/reward.txt", "1.0")
+    with pytest.raises(kira.BenchmarkExecutionError, match="taskA=0/2"):
         kira.require_complete_harbor_results(
-            tmp_path, ["taskA"], expected_trials=2
+            tmp_path, ["taskA", "taskB"], expected_trials=2
+        )
+
+
+def test_complete_harbor_results_tolerates_partial_trials(tmp_path):
+    # taskA lost one of two trials -> average the one it produced, don't crash.
+    _write(tmp_path / "taskA__0/verifier/reward.txt", "1.0")
+    scores = kira.require_complete_harbor_results(
+        tmp_path, ["taskA"], expected_trials=2
+    )
+    assert scores == {"taskA": 1.0}
+
+
+def test_complete_harbor_results_min_trials_floor(tmp_path):
+    # With min_trials=2, a single-trial task counts as missing.
+    _write(tmp_path / "taskA__0/verifier/reward.txt", "1.0")
+    with pytest.raises(kira.BenchmarkExecutionError, match="taskA=1/3"):
+        kira.require_complete_harbor_results(
+            tmp_path, ["taskA"], expected_trials=3, min_trials=2
         )
 
 

@@ -43,6 +43,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from ..components.evidence import EvidenceStore, evidence_from_trace
 from ..harness import Harness
 from .base import Benchmark
 from .kira import BenchmarkExecutionError, require_complete_harbor_results
@@ -191,10 +192,15 @@ class NexauBenchmark(Benchmark):
         self.agent_config_filename = agent_config_filename
         # Faithful to evolve.py: use AHE's pinned harbor (it registers `nexau`).
         self.harbor_bin = Path(harbor_bin) if harbor_bin else self.ahe_dir / ".venv" / "bin" / "harbor"
-        # task_id -> extracted failure excerpt from the most recent run (for
-        # trace-feeding). Stored in-memory so the on-disk jobs dir can be deleted
-        # right after each eval — avoids unbounded disk growth over a long run.
-        self._traces: dict[str, str] = {}
+        # harness_hash -> {task_id -> failure excerpt} from that harness's most
+        # recent run. Versioning by harness keeps a candidate's gate run from
+        # being attributed to the live harness (the diagnoser reads these).
+        # Stored in-memory so the on-disk jobs dir can be deleted right after
+        # each eval; only the most recent few harness versions are retained.
+        self._traces: dict[str, dict[str, str]] = {}
+        # Structured evidence (for the localizer + editor); populated alongside
+        # the flat _traces. last_trace stays back-compatible.
+        self.evidence_store = EvidenceStore()
 
     # --- task discovery ---
 
@@ -230,7 +236,10 @@ class NexauBenchmark(Benchmark):
 
     # --- command construction (pure; used by dry-runs and run) ---
 
-    def build_cmd(self, harness: Harness, task_ids: list[str], jobs_dir: Path, dataset_dir: Path) -> list[str]:
+    def build_cmd(
+        self, harness: Harness, task_ids: list[str], jobs_dir: Path, dataset_dir: Path,
+        *, force_build: bool | None = None,
+    ) -> list[str]:
         config_path = (harness.root / self.agent_config_filename).resolve()
         cmd = [
             str(self.harbor_bin), "run",
@@ -242,7 +251,7 @@ class NexauBenchmark(Benchmark):
             "--jobs-dir", str(jobs_dir),
             "-p", str(dataset_dir),
         ]
-        if self.force_build:
+        if self.force_build if force_build is None else force_build:
             cmd += ["--force-build"]
         if self.k > 1:
             cmd += ["-k", str(self.k)]
@@ -291,6 +300,10 @@ class NexauBenchmark(Benchmark):
         jobs_dir = work / "jobs"
         jobs_dir.mkdir(parents=True, exist_ok=True)
         self._link_dataset(task_ids, dataset_dir)
+        # ALWAYS honor force_build per invocation: without --force-build harbor
+        # switches to its prebuilt-image compose path, which is x86-only and
+        # crashes agent setup on arm64 hosts. Docker layer caching keeps the
+        # repeat "builds" cheap; skipping the flag does not.
         cmd = self.build_cmd(harness, task_ids, jobs_dir, dataset_dir)
         log_path = work / "harbor.log"
         try:
@@ -301,7 +314,7 @@ class NexauBenchmark(Benchmark):
                     cmd, cwd=str(self.ahe_dir), env=self._subprocess_env(),
                     stdout=log, stderr=subprocess.STDOUT,
                 )
-            self._capture_traces(jobs_dir, task_ids)
+            self._capture_traces(jobs_dir, task_ids, harness.content_hash())
             if proc.returncode != 0:
                 tail = log_path.read_text(errors="replace")[-2000:]
                 raise BenchmarkExecutionError(
@@ -317,14 +330,49 @@ class NexauBenchmark(Benchmark):
 
     # --- trace-feeding: surface why a task failed (PRD §5.1 trajectory) ---
 
-    def _capture_traces(self, jobs_dir: Path, task_ids: list[str]) -> None:
+    _TRACE_HASHES = 8  # harness versions to retain traces for
+
+    def _capture_traces(self, jobs_dir: Path, task_ids: list[str], harness_hash: str) -> None:
         """Extract a concise failure excerpt per task into memory (so the jobs
-        dir can be deleted right after)."""
+        dir can be deleted right after), keyed by the harness that produced it."""
+        bucket = self._traces.pop(harness_hash, {})
+        self._traces[harness_hash] = bucket  # re-insert as most recent
         for reward_file in Path(jobs_dir).rglob("verifier/reward.txt"):
             trial_dir = reward_file.parent.parent  # <task>__<trial>/
             tid = trial_dir.name.split("__", 1)[0]
             if tid in task_ids:
-                self._traces[tid] = self._extract_excerpt(trial_dir)
+                bucket[tid] = self._extract_excerpt(trial_dir)
+                self.evidence_store.put(harness_hash, self._trial_evidence(trial_dir, tid))
+        while len(self._traces) > self._TRACE_HASHES:
+            self._traces.pop(next(iter(self._traces)))
+
+    @staticmethod
+    def _trial_evidence(trial_dir: Path, tid: str):
+        """Structured evidence for one trial: the test verifier output as a
+        signal + the agent trajectory messages as the causal window."""
+        reward = 0.0
+        rf = trial_dir / "verifier" / "reward.txt"
+        try:
+            reward = float(rf.read_text().strip()) if rf.exists() else 0.0
+        except (OSError, ValueError):
+            reward = 0.0
+        verifier = trial_dir / "verifier" / "test-stdout.txt"
+        vtext = verifier.read_text(errors="replace") if verifier.exists() else ""
+        msgs = NexauBenchmark._tracer_messages(
+            trial_dir / "agent" / "nexau_in_memory_tracer.cleaned.json")
+        return evidence_from_trace(tid, reward, verifier_output=vtext, messages=msgs)
+
+    @staticmethod
+    def _tracer_messages(tracer: Path) -> list[dict]:
+        if not tracer.exists():
+            return []
+        try:
+            import json
+            data = json.loads(tracer.read_text(errors="replace"))
+        except (OSError, ValueError):
+            return []
+        msgs = data.get("messages") if isinstance(data, dict) else None
+        return [m for m in msgs if isinstance(m, dict)] if isinstance(msgs, list) else []
 
     @staticmethod
     def _extract_excerpt(trial_dir: Path) -> str:
@@ -344,8 +392,15 @@ class NexauBenchmark(Benchmark):
             parts.append("agent trajectory (tail):\n" + excerpt)
         return "\n\n".join(parts)[:2400]
 
-    def last_trace(self, task_id: str) -> str:
-        return self._traces.get(task_id, "")
+    def last_trace(self, task_id: str, *, harness: Harness | None = None) -> str:
+        if harness is None:
+            return ""  # without a harness identity we'd risk returning the wrong run's trace
+        return self._traces.get(harness.content_hash(), {}).get(task_id, "")
+
+    def last_evidence(self, task_id: str, *, harness: Harness | None = None):
+        if harness is None:
+            return None
+        return self.evidence_store.get(harness.content_hash(), task_id)
 
     @staticmethod
     def _tracer_excerpt(tracer: Path) -> str:

@@ -106,7 +106,71 @@ def _format_diagnosis(diagnosis: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _instruction(diagnosis, hint, do_not_touch, family_map_text) -> str:
+def _editable_block(editable_files: list[str] | None) -> str:
+    """Tell the agent EXACTLY which paths it may change — critical when the
+    editable surface is small (e.g. a single prose policy). Anything written
+    outside this whitelist is reverted by the shell, so an edit that lands
+    elsewhere is silently dropped. A path ending in ``/`` is a directory the
+    agent may add files under; otherwise it must edit that existing file in
+    place (do NOT create new files)."""
+    if not editable_files:
+        return ""
+    files = ", ".join(editable_files)
+    dirs = [f for f in editable_files if f.endswith("/")]
+    rule = (
+        " You may add files only under the directory entries; for plain files, "
+        "edit them in place."
+        if dirs else
+        " These are PLAIN FILES — edit them IN PLACE. Do NOT create new files: "
+        "anything outside this list is discarded, so your change must live in "
+        "these files (e.g. for a prose policy, add/rewrite the relevant rules)."
+    )
+    return (f"\n\nEDITABLE FILES (you may ONLY change these): {files}.{rule}")
+
+
+def _format_evidence(evidence: dict | None, *, char_budget: int = 4000) -> str:
+    """Render the failing-task evidence (verifier output + transcript windows)
+    for the editor — the "read the failure before you fix it" payload. Empty
+    string when no evidence, so prompts stay byte-identical to before."""
+    if not evidence:
+        return ""
+    items = [(t, v) for t, v in evidence.items() if v]
+    if not items:
+        return ""
+    per = max(400, char_budget // len(items))
+    lines = ["\n\nFailure evidence (verifier output + transcript windows) — "
+             "READ THIS before editing; fix what it actually shows:"]
+    for tid, text in items:
+        lines.append(f"\n[task {tid}]\n{str(text).strip()[:per]}")
+    return "\n".join(lines)
+
+
+def _format_localization(localization: list[dict] | None) -> str:
+    """Render evidence-grounded edit targets: which file/span to change and the
+    cited evidence. Empty string when none (prompt unchanged)."""
+    if not localization:
+        return ""
+    lines = ["\n\nLocalized edit target(s) — evidence-grounded; make the change here:"]
+    for t in localization:
+        loc, kind = t.get("target_locator", ""), t.get("change_kind", "")
+        head = f"\n- file: {t.get('target_file', '')}"
+        if loc:
+            head += f" @ {loc}"
+        if kind:
+            head += f" [{kind}]"
+        lines.append(head)
+        if t.get("current_text"):
+            body = str(t["current_text"]).strip()[:600].replace("\n", "\n    ")
+            lines.append(f"  current text to change:\n    {body}")
+        if t.get("rationale"):
+            lines.append(f"  why: {str(t['rationale'])[:300]}")
+        for e in (t.get("evidence") or [])[:3]:
+            lines.append(f"  evidence [{e.get('task_id', '')}]: {str(e.get('quote', ''))[:200]}")
+    return "\n".join(lines)
+
+
+def _instruction(diagnosis, hint, do_not_touch, family_map_text, editable_files=None,
+                 localization=None, evidence=None) -> str:
     dnt = ", ".join(do_not_touch or []) or "(none)"
     fm = f"\n\nStrategy-family map (prefer 'works', avoid 'falsified'):\n{family_map_text}" if family_map_text else ""
     return (
@@ -115,7 +179,8 @@ def _instruction(diagnosis, hint, do_not_touch, family_map_text) -> str:
         f"fix, but keep it small and keep the harness booting.\n\n"
         f"Approach for this strategy: {hint}\n\n"
         f"Diagnosis of this round's failures:\n{_format_diagnosis(diagnosis)}\n\n"
-        f"Do-not-touch files: {dnt}{fm}"
+        f"Do-not-touch files: {dnt}{_editable_block(editable_files)}"
+        f"{_format_localization(localization)}{_format_evidence(evidence)}{fm}"
     )
 
 
@@ -130,22 +195,75 @@ def propose_many(
     do_not_touch: list[str] | None = None,
     family_map_text: str = "",
     model: str | None = None,
+    editable_files: list[str] | None = None,
+    localization: list[dict] | None = None,
+    evidence: dict | None = None,
+    evidence_dir: Path | None = None,
 ) -> list[Strategy]:
     """Run the coding agent ``n`` times (distinct angles) → ``n`` candidate strategies."""
     hints = diversification_hints(diagnosis, n)
+    read_dirs = [Path(evidence_dir)] if evidence_dir else None
     strategies: list[Strategy] = []
     for i, hint in enumerate(hints):
         cand_dir = Path(round_dir) / f"strategy_{i}"
         candidate = base.copy_to(cand_dir)
         result = backend.run_agent(
-            _instruction(diagnosis, hint, do_not_touch, family_map_text),
+            _instruction(diagnosis, hint, do_not_touch, family_map_text, editable_files,
+                         localization, evidence),
             workspace=cand_dir, skill=load_skill(), tag=TAG, model=model,
+            read_dirs=read_dirs,
         )
         strategies.append(
             Strategy(strategy_id=f"{id_prefix}s{i}", candidate=candidate,
                      intent=hint, result=result)
         )
     return strategies
+
+
+def implement_hypothesis(
+    backend: Backend,
+    base: Harness,
+    cand_dir: Path,
+    node,
+    diagnosis: list[dict],
+    *,
+    strategy_id: str,
+    do_not_touch: list[str] | None = None,
+    validated_insights: list[str] | None = None,
+    model: str | None = None,
+    editable_files: list[str] | None = None,
+    localization: list[dict] | None = None,
+    evidence: dict | None = None,
+    evidence_dir: Path | None = None,
+) -> Strategy:
+    """Stage 2 of the tree path: one Tier-A run implementing ONE pre-selected
+    text hypothesis (an idea_tree Node). The hypothesis is the contract — the
+    agent implements it, it does not get to substitute its own idea; competing
+    ideas were already compared cheaply as text at stage 1."""
+    dnt = ", ".join(do_not_touch or []) or "(none)"
+    insights = "\n".join(f"- {i}" for i in (validated_insights or []))
+    insights_block = f"\n\nValidated insights from sibling ideas:\n{insights}" if insights else ""
+    instruction = (
+        "Implement EXACTLY this hypothesis — it is fixed and non-negotiable. "
+        "Make the smallest coherent change that realizes it and keep the "
+        "harness booting. Realize the hypothesis WITHIN the editable files "
+        "below — if the only editable file is a prose policy, express the idea "
+        "as added/rewritten policy rules, NOT as new code.\n\n"
+        f"Hypothesis: {node.title}\n"
+        f"Mechanism: {node.mechanism}\n"
+        f"Edit to make: {node.hypothesis}\n"
+        f"Predicted observable effect: {node.observable}\n\n"
+        f"Diagnosis of this round's failures:\n{_format_diagnosis(diagnosis)}\n\n"
+        f"Do-not-touch files: {dnt}{_editable_block(editable_files)}"
+        f"{_format_localization(localization)}{_format_evidence(evidence)}{insights_block}"
+    )
+    candidate = base.copy_to(Path(cand_dir))
+    result = backend.run_agent(
+        instruction, workspace=Path(cand_dir), skill=load_skill(), tag=TAG, model=model,
+        read_dirs=[Path(evidence_dir)] if evidence_dir else None,
+    )
+    return Strategy(strategy_id=strategy_id, candidate=candidate,
+                    intent=node.title, result=result)
 
 
 def repair(

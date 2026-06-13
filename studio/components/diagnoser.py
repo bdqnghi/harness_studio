@@ -42,6 +42,16 @@ def diagnose(
         f"Failing tasks:\n{listing}\n\n"
         "Return a JSON array of clusters; each cluster has: pattern_id, "
         "description, root_cause, failing_task_ids (subset of the ids above), "
-        "blamed_part, confidence (0-1)."
+        "blamed_part, confidence (0-1), and a failure signature: verifier_cause "
+        "(what the verifier mechanically observed), agent_mechanism (what the "
+        "agent did or failed to do that produced it), addressable (boolean; "
+        "false when no harness edit could plausibly fix it — task-specific "
+        "difficulty, infrastructure flake, or raw model-capability limits)."
     )
-    return backend.prompt_json(prompt, schemas.DIAGNOSIS, tag=TAG, model=model)
+    out = backend.prompt_json(prompt, schemas.DIAGNOSIS, tag=TAG, model=model)
+    for d in out:
+        if isinstance(d, dict):  # default-fill so downstream code can rely on the keys
+            d.setdefault("verifier_cause", "")
+            d.setdefault("agent_mechanism", "")
+            d.setdefault("addressable", True)
+    return out

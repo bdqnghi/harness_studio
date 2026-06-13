@@ -35,7 +35,7 @@ def run_practice(
 ) -> RunReport:
     scores = benchmark.run(harness, task_ids, run_idx=0)
     failures = [
-        Failure(tid, benchmark.describe(tid), trace=benchmark.last_trace(tid))
+        Failure(tid, benchmark.describe(tid), trace=benchmark.last_trace(tid, harness=harness))
         for tid, s in scores.items()
         if s < 1.0
     ]

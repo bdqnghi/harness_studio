@@ -43,11 +43,25 @@ class Benchmark(abc.ABC):
         Default is the id; targets enrich it (the toy adds input -> expected)."""
         return task_id
 
-    def last_trace(self, task_id: str) -> str:
+    def last_trace(self, task_id: str, *, harness: Harness | None = None) -> str:
         """A concise excerpt of why ``task_id`` failed on its most recent run —
         the verifier output and the agent's last actions. Fed to the Diagnoser so
         it blames a real cause, not just the task name. Default: none.
 
+        ``harness`` scopes the lookup: traces are versioned per harness so a
+        candidate's gate run can never be attributed to the live harness.
+
         Real targets override this; it must degrade gracefully (return "") when no
         trace is available, so the loop never depends on it."""
         return ""
+
+    # Structured failure evidence (components/evidence.py). Adapters that decode
+    # their verifier output set ``evidence_store`` and override ``last_evidence``;
+    # everything else falls back to the flat ``last_trace`` above. The localizer
+    # and editor consume this — see components/localizer.py.
+    evidence_store = None  # type: ignore[assignment]
+
+    def last_evidence(self, task_id: str, *, harness: Harness | None = None):
+        """Structured :class:`~studio.components.evidence.TaskEvidence` for why
+        ``task_id`` failed, or ``None`` when unavailable. Default: none."""
+        return None

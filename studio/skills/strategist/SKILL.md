@@ -11,7 +11,13 @@ config, memory) so it passes more benchmark tasks.
   how the harness works before editing.
 
 ## What to do
-1. Read the failing-task evidence in the instruction you were given.
+1. Read the failing-task evidence in the instruction (the verifier's failed
+   checks + the causal transcript windows) so your fix targets what actually
+   went wrong — not a guess. If a **localized edit target** is given (a file +
+   span + cited `current text to change`), open that file and confirm the span
+   matches before you edit it: **do not change harness text you have not read.**
+   When extra read-only evidence directories are provided, read them for the
+   full transcript if the inlined window isn't enough.
 2. Form the **smallest** coherent change that addresses those failures. Prefer
    fixing a real cause (a buggy function, a missing rule) over broad rewrites.
 3. Apply the edit to the files. Keep the harness runnable — it must still import

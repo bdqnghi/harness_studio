@@ -68,3 +68,21 @@ class Backend(abc.ABC):
         ``skill`` is the minimal SKILL.md text steering the agent (workspace
         layout, do-not-touch list, output contract). ``read_dirs`` are extra
         read-only directories (e.g. prior traces) the agent may inspect."""
+
+    def run_explore(
+        self,
+        instruction: str,
+        *,
+        read_dirs: list[Path],
+        schema: dict,
+        tag: str = "",
+        model: str | None = None,
+        max_turns: int | None = None,
+    ) -> dict:
+        """Read-only sibling of ``run_agent`` (the localizer's Explore analog):
+        an agentic loop with ONLY read/search tools over ``read_dirs`` that
+        terminates by returning JSON conforming to ``schema``.
+
+        Not every backend supports it; the default signals that so callers can
+        fall back to a single ``prompt_json``. Concrete backends override."""
+        raise NotImplementedError("this backend does not support run_explore")

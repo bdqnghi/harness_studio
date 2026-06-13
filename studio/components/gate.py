@@ -72,6 +72,7 @@ class Gate:
         *,
         regression_tasks: list[str] | None = None,
         borderline_extra_runs: int = 5,
+        aggregate_accept: bool = False,
     ) -> None:
         self.benchmark = benchmark
         self.judging = list(judging_tasks)
@@ -80,8 +81,17 @@ class Gate:
         self.regression = list(regression_tasks or [])
         self.wobble = max(0.0, wobble)
         self.extra = max(0, borderline_extra_runs)
+        # aggregate_accept (off by default): score the edit on the POOLED held-in
+        # set (judging ∪ regression) and accept on the pooled gain, instead of
+        # requiring EACH slice to independently not-regress. The strict dual
+        # split rejects an edit that genuinely helps overall when it lands on
+        # tasks in one slice and the other slice wobbles negative from noise —
+        # a real failure mode on noisy benchmarks (observed on tau2 cold-start).
+        self.aggregate_accept = aggregate_accept
 
     def evaluate(self, old: Harness, new: Harness, *, additive: bool = False) -> GateDecision:
+        if self.regression and self.aggregate_accept:
+            return self._evaluate_aggregate(old, new, additive=additive)
         if self.regression:
             return self._evaluate_dual(old, new, additive=additive)
         if not self.judging:
@@ -148,6 +158,58 @@ class Gate:
             accept, avg_gain, _mean(old_s), _mean(new_s),
             regressed=avg_gain < 0, borderline=True, runs_used=1 + self.extra,
             reason=reason,
+        )
+
+    # --- aggregate-accept (pooled held-in gain; opt-in) -------------------------
+
+    def _evaluate_aggregate(self, old, new, *, additive: bool) -> GateDecision:
+        """Do-no-harm on the POOLED held-in set (judging ∪ regression).
+
+        Accept iff the edit improves the pooled set beyond the noise floor (or,
+        if additive, doesn't regress it). This captures edits that help overall
+        even when the gain concentrates in one slice and the other wobbles
+        negative — which the strict per-slice dual gate rejects. The pooled mean
+        is a larger sample, so it is also less noisy than either slice alone."""
+        tasks = list(dict.fromkeys(self.judging + self.regression))
+        # regression-slice gain is still computed for the decision log/field.
+        gr, _, _ = self._gain_on(old, new, self.regression) if self.regression else (0.0, {}, {})
+        old_s = self.benchmark.run(old, tasks, run_idx=0)
+        new_s = self.benchmark.run(new, tasks, run_idx=0)
+        gain = _mean(new_s) - _mean(old_s)
+        old_score, new_score = _mean(old_s), _mean(new_s)
+
+        if gain > self.wobble:
+            return GateDecision(True, gain, old_score, new_score, regression_gain=gr,
+                                reason=f"aggregate gain {gain:+.3f} > wobble (pooled {len(tasks)})")
+        if gain < -self.wobble:
+            return GateDecision(False, gain, old_score, new_score, regression_gain=gr,
+                                regressed=True,
+                                reason=f"aggregate regresses ({gain:+.3f} pooled)")
+        if self.wobble == 0:
+            if additive or gain > 0:
+                return GateDecision(True, gain, old_score, new_score, regression_gain=gr,
+                                    reason=f"aggregate exact non-regression ({gain:+.3f})")
+            return GateDecision(False, gain, old_score, new_score, regression_gain=gr,
+                                reason="aggregate behavioral edit has no strict gain")
+        # Borderline: average the pooled set over extra runs, then decide.
+        old_acc = {t: [old_s[t]] for t in tasks}
+        new_acc = {t: [new_s[t]] for t in tasks}
+        for r in range(1, self.extra + 1):
+            o = self.benchmark.run(old, tasks, run_idx=r)
+            n = self.benchmark.run(new, tasks, run_idx=r)
+            for t in tasks:
+                old_acc[t].append(o[t]); new_acc[t].append(n[t])
+        avg_gain = sum(
+            sum(new_acc[t]) / len(new_acc[t]) - sum(old_acc[t]) / len(old_acc[t])
+            for t in tasks
+        ) / len(tasks)
+        residual = self.wobble / math.sqrt(1 + self.extra)
+        accept = (avg_gain >= -residual) if additive else (avg_gain > residual)
+        return GateDecision(
+            accept, avg_gain, old_score, new_score, regression_gain=gr,
+            regressed=avg_gain < 0, borderline=True, runs_used=1 + self.extra,
+            reason=f"aggregate borderline resolved: pooled gain {avg_gain:+.4f} "
+                   f"(threshold {residual:+.4f})",
         )
 
     # --- dual-split (Self-Harness 2606.09498) -----------------------------------

@@ -27,6 +27,7 @@ class GateConfig:
     """Gate tuning (PRD §5.8)."""
 
     borderline_extra_runs: int = 5  # capped re-runs for in-band decisions
+    aggregate_accept: bool = False  # accept on pooled held-in gain vs per-slice do-no-harm
 
 
 @dataclass
@@ -45,6 +46,11 @@ class LoopConfig:
     segment_length: int = 10  # rounds per segment (outer loop); bounded by meta
     wobble_runs: int = 5  # repeated runs at setup to measure the noise floor
     strategies_per_round: int = 3  # competing strategies the Strategist proposes
+    optimizer: str = "classic"  # "classic" (propose-n, gate fall-through) | "tree"
+    hypotheses_per_direction: int = 4  # tree: text hypotheses per ideation call
+    # Context localization (components/localizer.py): "off" (diagnosis-only, the
+    # legacy behavior) | "inline" | "agentic" | "auto" (pick by difficulty).
+    localizer: str = "off"
 
 
 @dataclass
@@ -82,6 +88,7 @@ class Config:
     seed: int = 0
     noise_per_mille: int = 0  # injected toy wobble; 0 for exact tests
     cache: bool = True  # cache benchmark scores within a segment (PRD §8)
+    score_cache: str = ""  # disk-backed score cache (JSONL); "" = memory only
     piles: PileConfig = field(default_factory=PileConfig)
     gate: GateConfig = field(default_factory=GateConfig)
     loop: LoopConfig = field(default_factory=LoopConfig)
@@ -102,6 +109,7 @@ class Config:
             seed=data.get("seed", 0),
             noise_per_mille=data.get("noise_per_mille", 0),
             cache=data.get("cache", True),
+            score_cache=data.get("score_cache", ""),
             piles=PileConfig(**data.get("piles", {})),
             gate=GateConfig(**data.get("gate", {})),
             loop=LoopConfig(**data.get("loop", {})),

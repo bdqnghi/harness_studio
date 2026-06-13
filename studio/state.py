@@ -91,9 +91,26 @@ class WorkspaceState:
     def evidence_path(self) -> Path:
         return self.root / "evidence.jsonl"
 
+    @property
+    def progress_path(self) -> Path:
+        return self.root / "progress.jsonl"
+
+    @property
+    def health_log_path(self) -> Path:
+        return self.root / "health.log"
+
     # --- recording ---
 
     def record(self, outcome: RoundOutcome) -> None:
         self.evidence.append(outcome)
         with self.evidence_path.open("a") as f:
             f.write(json.dumps({"ts": time.time(), **outcome.to_dict()}) + "\n")
+
+    def log_health(self, line: str) -> None:
+        """Health signals must survive the process (a halted run's last words)."""
+        self.health_log.append(line)
+        try:
+            with self.health_log_path.open("a") as f:
+                f.write(f"{time.time():.0f} {line}\n")
+        except OSError:
+            pass
