@@ -1,134 +1,86 @@
-"""Tests for the dual-split gate (Self-Harness C1+C2).
+"""Gate acceptance: NET pooled (default) + strict-dual escape hatch.
 
-Setup: judging = `upper` tasks (baseline FAILS them), regression = `echo` tasks
-(baseline PASSES them). So `enable_upper` improves judging; `regress_echo`
-hurts regression. This lets us exercise every branch of the dual-split rule.
+held_in (judging) ∪ regression are pooled into ONE net decision. A real overall
+lift is kept even when one slice dips a little within noise (measurement variance
+dominates, so a small regression must not veto a genuine net gain); a regression
+that outweighs the gain is still rejected. ``strict_dual`` restores per-slice veto.
 """
 
 from studio.benchmark import toy_fixes
+from studio.benchmark.base import Benchmark
 from studio.benchmark.toy import ToyBenchmark, build_toy_harness
 from studio.components.gate import Gate
+from studio.harness import Harness
 
-JUDGING = ["upper-0", "upper-1"]      # baseline fails
-REGRESSION = ["echo-0", "echo-1"]     # baseline passes
-
-
-def _h(tmp_path, name, *fixes):
-    h = build_toy_harness(tmp_path / name)
-    for f in fixes:
-        f(h.root)
-    return h
+JUDGE, REG = ["j1", "j2"], ["r1", "r2"]
 
 
-def _gate(tmp_path):
-    bench = ToyBenchmark(per_family=4, noise_per_mille=0)
-    return bench, Gate(bench, JUDGING, wobble=0.0, regression_tasks=REGRESSION)
-
-
-def test_improves_one_harms_none_accepts(tmp_path):
-    _, gate = _gate(tmp_path)
-    old = _h(tmp_path, "old")
-    new = _h(tmp_path, "new", toy_fixes.enable_upper)  # judging up, regression unchanged
-    d = gate.evaluate(old, new, additive=False)
-    assert d.accept and d.gain > 0 and d.regression_gain == 0
-
-
-def test_helps_judging_hurts_regression_rejected(tmp_path):
-    # The exact overfit our v3 run suffered: better on the gate, worse on held-out.
-    _, gate = _gate(tmp_path)
-    old = _h(tmp_path, "old")
-    new = _h(tmp_path, "new", toy_fixes.enable_upper, toy_fixes.regress_echo)
-    d = gate.evaluate(old, new, additive=False)
-    assert not d.accept and d.regressed and d.regression_gain < 0
-
-
-def test_regresses_regression_only_rejected(tmp_path):
-    _, gate = _gate(tmp_path)
-    old = _h(tmp_path, "old")
-    new = _h(tmp_path, "new", toy_fixes.regress_echo)  # judging flat, regression down
-    d = gate.evaluate(old, new, additive=False)
-    assert not d.accept and d.regressed
-
-
-def test_behavioral_neutral_on_both_rejected(tmp_path):
-    # C2: a behavioral edit must strictly improve >=1 split, not just do no harm.
-    _, gate = _gate(tmp_path)
-    old = _h(tmp_path, "old")
-    new = _h(tmp_path, "new")  # identical -> neutral on both
-    d = gate.evaluate(old, new, additive=False)
-    assert not d.accept and "no strict gain" in d.reason
-
-
-def test_additive_neutral_on_both_accepted(tmp_path):
-    # An additive edit may be neutral on both visible splits (do-no-harm keeps it).
-    _, gate = _gate(tmp_path)
-    old = _h(tmp_path, "old")
-    new = _h(tmp_path, "new")  # neutral on both
-    d = gate.evaluate(old, new, additive=True)
-    assert d.accept
-
-
-def test_single_split_mode_unchanged(tmp_path):
-    # No regression_tasks -> legacy single-split do-no-harm path (gain>=0 accepts).
-    bench = ToyBenchmark(per_family=4, noise_per_mille=0)
-    gate = Gate(bench, JUDGING, wobble=0.0)  # no regression set
-    old = _h(tmp_path, "old")
-    new = _h(tmp_path, "new", toy_fixes.enable_upper)
-    assert gate.evaluate(old, new).accept
-
-
-# --- aggregate-accept mode (opt-in): pooled held-in gain vs per-slice do-no-harm ---
-
-def test_aggregate_accept_captures_gain_the_dual_gate_rejects(tmp_path):
-    """The exact tau2 cold-start failure: an edit helps the regression slice a
-    lot but nudges judging slightly negative (within the wobble band). The
-    strict per-slice dual gate REJECTS it (judging 'regressed'); aggregate mode
-    ACCEPTS it because the pooled held-in gain is clearly positive."""
-    from studio.benchmark.base import Benchmark
-    from studio.components.gate import Gate
-    from studio.harness import Harness
-
+def _pair(tmp_path, old_s, new_s):
     class _Bench(Benchmark):
-        def list_tasks(self): return ["j1", "j2", "r1", "r2"]
+        def list_tasks(self):
+            return list(old_s)
+
         def run(self, harness, task_ids, *, run_idx=0):
-            new = "new" in harness.root.name
-            # old: j1=1 j2=1 r1=0 r2=0 | new: j1=1 j2=0.8 (judging -0.1), r1=1 r2=1 (regression +1.0)
-            old_s = {"j1": 1.0, "j2": 1.0, "r1": 0.0, "r2": 0.0}
-            new_s = {"j1": 1.0, "j2": 0.8, "r1": 1.0, "r2": 1.0}
-            src = new_s if new else old_s
+            src = new_s if "new" in harness.root.name else old_s
             return {t: src[t] for t in task_ids}
 
     old = Harness(tmp_path / "old"); (tmp_path / "old").mkdir(); old.write_file("p", "x")
     new = Harness(tmp_path / "new"); (tmp_path / "new").mkdir(); new.write_file("p", "y")
-    b = _Bench()
-    judging, regression = ["j1", "j2"], ["r1", "r2"]
-    WOBBLE = 0.2  # judging -0.1 sits inside the band; pooled +0.45 clears it
-
-    # strict dual gate REJECTS: judging gain -0.1 fails per-slice non-regression.
-    d_strict = Gate(b, judging, WOBBLE, regression_tasks=regression,
-                    borderline_extra_runs=0).evaluate(old, new)
-    assert d_strict.accept is False
-
-    # aggregate gate ACCEPTS: pooled gain (1+0.8+1+1)/4 - (1+1+0+0)/4 = +0.45 > wobble.
-    d_agg = Gate(b, judging, WOBBLE, regression_tasks=regression,
-                 borderline_extra_runs=0, aggregate_accept=True).evaluate(old, new)
-    assert d_agg.accept is True and d_agg.gain > WOBBLE
+    return _Bench(), old, new
 
 
-def test_aggregate_accept_still_rejects_real_regression(tmp_path):
-    """Aggregate mode must still reject an edit that hurts the pool overall."""
-    from studio.benchmark.base import Benchmark
-    from studio.components.gate import Gate
-    from studio.harness import Harness
+def test_net_accepts_big_gain_small_regression(tmp_path):
+    """THE case: the edit lifts held_in a lot and dips regression a little —
+    net clearly positive, so it is ACCEPTED (not vetoed by the regression dip)."""
+    b, old, new = _pair(tmp_path,
+                        {"j1": 0.0, "j2": 0.0, "r1": 1.0, "r2": 1.0},
+                        {"j1": 1.0, "j2": 1.0, "r1": 0.9, "r2": 0.9})
+    d = Gate(b, JUDGE, 0.2, regression_tasks=REG, borderline_extra_runs=0).evaluate(old, new)
+    # pooled gain = (3.8 - 2.0)/4 = +0.45 > wobble 0.2
+    assert d.accept and d.gain > 0.2
+    assert d.regression_gain < 0          # regression genuinely dipped — and we still accepted
 
-    class _Bench(Benchmark):
-        def list_tasks(self): return ["j1", "r1"]
-        def run(self, harness, task_ids, *, run_idx=0):
-            new = "new" in harness.root.name
-            return {t: (0.0 if new else 1.0) for t in task_ids}  # new is worse everywhere
 
-    old = Harness(tmp_path / "old"); (tmp_path / "old").mkdir(); old.write_file("p", "x")
-    new = Harness(tmp_path / "new"); (tmp_path / "new").mkdir(); new.write_file("p", "y")
-    agg = Gate(_Bench(), ["j1"], 0.0, regression_tasks=["r1"], aggregate_accept=True)
-    d = agg.evaluate(old, new)
-    assert d.accept is False and d.regressed is True
+def test_net_rejects_when_regression_outweighs_gain(tmp_path):
+    """A regression that outweighs the gain still nets negative -> reject."""
+    b, old, new = _pair(tmp_path,
+                        {"j1": 0.0, "j2": 0.0, "r1": 1.0, "r2": 1.0},
+                        {"j1": 0.1, "j2": 0.1, "r1": 0.0, "r2": 0.0})
+    d = Gate(b, JUDGE, 0.2, regression_tasks=REG, borderline_extra_runs=0).evaluate(old, new)
+    # pooled gain = (0.2 - 2.0)/4 = -0.45 -> reject
+    assert not d.accept and d.regressed
+
+
+def test_net_improves_one_harms_none_accepts(tmp_path):
+    bench = ToyBenchmark(per_family=4, noise_per_mille=0)
+    old = build_toy_harness(tmp_path / "old")
+    new = build_toy_harness(tmp_path / "new"); toy_fixes.enable_upper(new.root)
+    g = Gate(bench, ["upper-0", "upper-1"], 0.0, regression_tasks=["echo-0", "echo-1"])
+    assert g.evaluate(old, new).accept
+
+
+def test_additive_neutral_on_both_accepted(tmp_path):
+    bench = ToyBenchmark(per_family=4, noise_per_mille=0)
+    old = build_toy_harness(tmp_path / "old")
+    new = build_toy_harness(tmp_path / "new")  # neutral on both
+    g = Gate(bench, ["upper-0", "upper-1"], 0.0, regression_tasks=["echo-0", "echo-1"])
+    assert g.evaluate(old, new, additive=True).accept
+
+
+def test_single_split_mode_unchanged(tmp_path):
+    # No regression set -> single-split do-no-harm path (gain >= 0 accepts).
+    bench = ToyBenchmark(per_family=4, noise_per_mille=0)
+    old = build_toy_harness(tmp_path / "old")
+    new = build_toy_harness(tmp_path / "new"); toy_fixes.enable_upper(new.root)
+    assert Gate(bench, ["upper-0", "upper-1"], 0.0).evaluate(old, new).accept
+
+
+def test_strict_dual_vetoes_any_regression(tmp_path):
+    """The escape hatch: strict_dual=True restores per-slice veto, so the same
+    big-gain-small-regression edit is REJECTED."""
+    b, old, new = _pair(tmp_path,
+                        {"j1": 0.0, "j2": 0.0, "r1": 1.0, "r2": 1.0},
+                        {"j1": 1.0, "j2": 1.0, "r1": 0.9, "r2": 0.9})
+    d = Gate(b, JUDGE, 0.2, regression_tasks=REG, borderline_extra_runs=0,
+             strict_dual=True).evaluate(old, new)
+    assert not d.accept

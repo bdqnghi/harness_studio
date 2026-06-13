@@ -1,27 +1,29 @@
 """Task splitter: carve a benchmark into the three working sets.
 
-The optimizer has a **fixed appetite** (like an SGD mini-batch): the sets it
-sees every round do NOT grow with the benchmark size. So a benchmark is split
-into three sets only:
+The optimizer has a **fixed appetite** (like an SGD mini-batch): the set it sees
+every round does NOT grow with the benchmark size. So a benchmark is split into
+three sets only:
 
-  * **held-in pool** (``practice``)  — the variety pool; each round samples
-    ``round_size`` tasks from it to find failures AND first-check an edit.
-  * **regression**                   — a disjoint do-no-harm set; an edit must
-    not hurt it (the second, independent gate check).
-  * **held-out test** (``final_exam``) — locked the whole time, graded once at
-    the end. This is the only honest number.
+  * **held_in**    — the pool you optimize on. Each round samples ``round_size``
+    tasks from it to find failures; the gate scores old-vs-new on it.
+  * **regression** — a disjoint do-no-harm set, pooled with held_in into the
+    gate's NET decision (an edit must not make the whole pool worse).
+  * **held_out**   — locked the whole time, graded once at the end. The only
+    honest number.
 
-``judging`` is a stable, power-sized slice of the held-in pool (the gate scores
-old-vs-new on it every round); ``audit`` is a small slice of the pool the deep
-auditor periodically re-checks. Slow/"heavy" tasks go ONLY into the locked test
-(never the every-round sets), so a 3-hour task can be graded but can never stall
-a round.
+There is deliberately **no separate "judging"/"audit" set**: the gate just scores
+on held_in, and the noise that a held-aside audit slice would (weakly) guard
+against is handled the right way — by *re-measurement* (repeated rollouts on
+borderline calls; a segment-boundary re-roll of the live harness) — since the
+dominant variance here is measurement noise, not task-sampling. This matches the
+prior art (Self-Harness, Arbor both use exactly held-in + held-out).
 
-Held-in (pool + regression) is a roughly constant scoop (≤ a few hundred) no
-matter how big N is; everything else goes to the locked test, so **more data
-buys a sharper final number, not a slower optimizer.** Below a floor where an
-honest held-out can't be seated, the plan switches to *transfer* mode (optimize
-on all, verify on a different benchmark/model).
+Slow/"heavy" tasks go ONLY into the locked test (never the every-round set), so a
+3-hour task can be graded but can never stall a round. Held-in (pool + regression)
+is a roughly constant scoop no matter how big N is; everything else goes to the
+locked test, so **more data buys a sharper final number, not a slower optimizer.**
+Below a floor where an honest held-out can't be seated, the plan switches to
+*transfer* mode (optimize on all, verify on a different benchmark/model).
 """
 
 from __future__ import annotations
@@ -35,11 +37,9 @@ from ..config import PileConfig
 
 @dataclass
 class TaskSplit:
-    practice: list[str]  # held-in pool sampled fresh each round (Runner)
-    judging: list[str]  # stable gate set (primary do-no-harm check) ⊆ practice
-    audit: list[str]  # small pool slice the deep auditor re-checks ⊆ practice
-    final_exam: list[str]  # locked until the very end (the one honest number)
-    regression: list[str] = field(default_factory=list)  # disjoint do-no-harm 2nd check
+    held_in: list[str]  # the pool: sampled each round; the gate scores old-vs-new here
+    regression: list[str] = field(default_factory=list)  # disjoint do-no-harm, pooled into the gate
+    held_out: list[str] = field(default_factory=list)  # locked until the very end (the one honest number)
 
 
 def _ordering(task_ids: list[str], seed: int) -> list[str]:
@@ -54,19 +54,18 @@ def _ordering(task_ids: list[str], seed: int) -> list[str]:
 def split_tasks(task_ids: list[str], piles: PileConfig, seed: int = 0) -> TaskSplit:
     """Fixed-size fallback split (used when no adaptive plan is supplied).
 
-    Carves in priority order: final_exam, audit, judging, practice."""
+    Carves in priority order: held_out, regression, held_in (everything left)."""
     order = _ordering(task_ids, seed)
     take = lambda n: [order.pop(0) for _ in range(min(n, len(order)))]  # noqa: E731
-    final_exam = take(piles.final_exam)
-    audit = take(piles.audit)
-    judging = take(piles.judging)
-    practice = list(order)  # everything left is the practice pool
-    return TaskSplit(practice=practice, judging=judging, audit=audit, final_exam=final_exam)
+    held_out = take(piles.held_out)
+    regression = take(piles.regression)
+    held_in = list(order)  # everything left is the held-in pool
+    return TaskSplit(held_in=held_in, regression=regression, held_out=held_out)
 
 
-def sample_practice(split: TaskSplit, size: int, seed: int, round_idx: int) -> list[str]:
-    """Fresh-random practice batch for a round (deterministic given seed+round)."""
-    order = _ordering(split.practice, seed * 1000 + round_idx)
+def sample_held_in(split: TaskSplit, size: int, seed: int, round_idx: int) -> list[str]:
+    """Fresh-random held-in batch for a round (deterministic given seed+round)."""
+    order = _ordering(split.held_in, seed * 1000 + round_idx)
     return order[:size]
 
 
@@ -91,10 +90,9 @@ class SplitPlan:
     split: TaskSplit | None = None
     rationale: str = ""
     sigma2: float = 0.0
-    n_pool: int = 0                 # held-in variety pool (~constant across N)
-    n_judging: int = 0              # stable gate set ⊆ pool
+    n_held_in: int = 0              # held-in pool (~constant across N); gate scores on it
     n_regression: int = 0           # disjoint do-no-harm set
-    n_test: int = 0                 # locked, graded once
+    n_held_out: int = 0             # locked, graded once
     detectable_round: float = 0.0   # smallest effect the per-round gate can resolve
     detectable_final: float = 0.0   # smallest effect the locked-test verdict can resolve
     recommend: str = ""             # "split" | "transfer"
@@ -161,7 +159,6 @@ def choose_split(
     test_k: int = 3,
     z: float = 1.96,
     delta_round: float = 0.12,
-    val_floor: int = 8,
     reg_floor: int = 16,
     reg_cap: int = 32,
     pool_mult: int = 4,
@@ -170,20 +167,19 @@ def choose_split(
     test_budget_cap: int = 0,
     heavy_sec: float = 3600.0,
 ) -> SplitPlan:
-    """Carve the benchmark into held-in pool + regression + locked test.
+    """Carve the benchmark into held_in pool + regression + locked held_out.
 
-    The held-in scoop (``pool`` + ``regression``) is sized by power and capped, so
-    it stays ~constant as N grows; the locked test absorbs everything else. Slow
-    tasks (``timeout >= heavy_sec``) go ONLY to the test. Below a floor where an
-    honest held-out can't be seated, returns ``mode="transfer"``.
+    The held-in scoop (``held_in`` + ``regression``) is sized by power and capped,
+    so it stays ~constant as N grows; the locked test absorbs everything else.
+    Slow tasks (``timeout >= heavy_sec``) go ONLY to the test. Below a floor where
+    an honest held-out can't be seated, returns ``mode="transfer"``.
 
     Sizing knobs:
       * ``round_size`` — tasks run per round (the SGD mini-batch). Default 32.
-      * ``pool`` = clamp(``pool_mult*round_size``, round_size, ``pool_cap``).
+      * ``held_in`` = clamp(``pool_mult*round_size``, round_size, ``pool_cap``).
       * ``regression`` = clamp(power_n(δ=``delta_round``), ``reg_floor``, ``reg_cap``).
-      * ``judging`` (stable gate slice ⊆ pool) = clamp(power_n, ``val_floor``, round_size).
-      * ``test`` = all leftover (incl. every heavy task); a ``test_budget_cap`` (>0)
-        keeps every heavy task and grades a representative light-task subsample.
+      * ``held_out`` = all leftover (incl. every heavy task); a ``test_budget_cap``
+        (>0) keeps every heavy task and grades a representative light-task subsample.
     """
     task_ids = list(dict.fromkeys(task_ids))
     N = len(task_ids)
@@ -209,16 +205,15 @@ def choose_split(
     # --- fixed scoops (do NOT grow with N) ---
     reg_n = _clamp(power_n(sigma2, z=z, delta=delta_round, k=opt_k), reg_floor, reg_cap)
     pool_n = _clamp(pool_mult * round_size, round_size, pool_cap)
-    n_judging = _clamp(power_n(sigma2, z=z, delta=delta_round, k=opt_k), val_floor, round_size)
 
     # The locked test must reach test_floor; the heavy tasks (all go to test) count.
     test_light_floor = max(0, test_floor - len(heavy))
 
     # --- shrink-to-fit for small benchmarks ---
-    # Light-task priority: regression (independent) -> pool (held-in) -> test.
+    # Light-task priority: regression (independent) -> held_in -> test.
     deficit = (reg_n + pool_n + test_light_floor) - L
     if deficit > 0:
-        cut = min(deficit, pool_n - round_size)   # shrink pool first, keep >= round_size
+        cut = min(deficit, pool_n - round_size)   # shrink held_in first, keep >= round_size
         pool_n -= cut
         deficit -= cut
     if deficit > 0:
@@ -230,16 +225,13 @@ def choose_split(
         # Too few tasks to lock an honest held-out -> optimize on all, verify by
         # TRANSFER (a different benchmark/model — the caller's job).
         reg = _stratified_sample(light, min(reg_floor, max(0, L // 4)), strata, seed + 2)
-        pool = [t for t in light if t not in set(reg)]
-        judging = _stratified_sample(pool, min(len(pool), n_judging), strata, seed + 3)
-        audit = _stratified_sample(pool, min(len(pool), max(4, n_judging // 2)), strata, seed + 4)
-        split = TaskSplit(practice=pool, judging=judging, audit=audit,
-                          final_exam=list(heavy), regression=reg)
-        det_round = detectable_delta(len(judging), sigma2, z=z, k=opt_k)
+        held_in = [t for t in light if t not in set(reg)]
+        split = TaskSplit(held_in=held_in, regression=reg, held_out=list(heavy))
+        det_round = detectable_delta(len(held_in), sigma2, z=z, k=opt_k)
         return SplitPlan(
             mode="transfer", k=test_k, split=split, sigma2=sigma2,
-            n_pool=len(pool), n_judging=len(judging), n_regression=len(reg),
-            n_test=len(split.final_exam), detectable_round=det_round,
+            n_held_in=len(held_in), n_regression=len(reg),
+            n_held_out=len(split.held_out), detectable_round=det_round,
             detectable_final=0.0, recommend="transfer",
             rationale=(f"N={N}: too small for an honest held-out ({L} light < "
                        f"{round_size}+{reg_floor}); optimize on all and verify by "
@@ -249,8 +241,8 @@ def choose_split(
     # --- the normal single split ---
     reg = _stratified_sample(light, reg_n, strata, seed + 2)
     rest = [t for t in light if t not in set(reg)]
-    pool = _stratified_sample(rest, pool_n, strata, seed + 1)
-    taken = set(reg) | set(pool)
+    held_in = _stratified_sample(rest, pool_n, strata, seed + 1)
+    taken = set(reg) | set(held_in)
     test_light = [t for t in light if t not in taken]
     test_full = list(heavy) + test_light          # ALL heavy + leftover light
     if test_budget_cap and len(test_full) > test_budget_cap:
@@ -262,25 +254,19 @@ def choose_split(
                 f"and {len(heavy)} heavy tasks"
             )
         light_budget = test_budget_cap - len(heavy)
-        test = list(heavy) + _stratified_sample(
-            test_light, light_budget, strata, seed + 9
-        )
+        test = list(heavy) + _stratified_sample(test_light, light_budget, strata, seed + 9)
     else:
         test = test_full
-    judging = _stratified_sample(pool, min(len(pool), n_judging), strata, seed + 3)
-    audit = _stratified_sample(pool, min(len(pool), max(4, n_judging // 2)), strata, seed + 4)
-    split = TaskSplit(practice=pool, judging=judging, audit=audit,
-                      final_exam=test, regression=reg)
-    det_round = detectable_delta(len(judging), sigma2, z=z, k=opt_k)
+    split = TaskSplit(held_in=held_in, regression=reg, held_out=test)
+    det_round = detectable_delta(len(held_in), sigma2, z=z, k=opt_k)
     det_final = detectable_delta(len(test), sigma2, z=z, k=test_k)
     graded_light = len(test) - len(heavy)
     return SplitPlan(
         mode="holdout", k=test_k, split=split, sigma2=sigma2,
-        n_pool=len(pool), n_judging=len(judging), n_regression=len(reg), n_test=len(test),
+        n_held_in=len(held_in), n_regression=len(reg), n_held_out=len(test),
         detectable_round=det_round, detectable_final=det_final, recommend="split",
-        rationale=(f"N={N}: held-in pool={len(pool)} (sample {round_size}/round) + "
-                   f"regression={len(reg)} (do-no-harm) | test={len(test)} locked "
+        rationale=(f"N={N}: held_in={len(held_in)} (sample {round_size}/round, gate scores here) + "
+                   f"regression={len(reg)} (do-no-harm) | held_out={len(test)} locked "
                    f"({len(heavy)} heavy + {graded_light} light, graded once at k={test_k}). "
-                   f"judging={len(judging)} (stable gate). detectable: round~{det_round:.3f}, "
-                   f"test~{det_final:.3f}."),
+                   f"detectable: round~{det_round:.3f}, test~{det_final:.3f}."),
     )

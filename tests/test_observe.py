@@ -11,10 +11,8 @@ from studio.config import Config, EditConfig, LoopConfig
 from studio.orchestrator import Orchestrator
 
 SPLIT = TaskSplit(
-    judging=[f"{f}-{i}" for f in FAMILIES for i in (0, 1)],
-    final_exam=[f"{f}-{i}" for f in FAMILIES for i in (2, 3)],
-    audit=[f"{f}-{i}" for f in FAMILIES for i in (4, 5)],
-    practice=[f"{f}-{i}" for f in FAMILIES for i in (6, 7, 8, 9, 10, 11)],
+    held_in=[f"{f}-{i}" for f in FAMILIES for i in (0, 1, 4, 5, 6, 7, 8, 9, 10, 11)],
+    held_out=[f"{f}-{i}" for f in FAMILIES for i in (2, 3)],
 )
 
 DIAG = [{
@@ -70,7 +68,7 @@ def test_progress_jsonl_event_stream(tmp_path):
     for r in range(1, ROUNDS + 1):
         rnd = [e for e in events if e.get("round") == r]
         rnames = [e["event"] for e in rnd]
-        for expected in ("round_start", "practice_done", "diagnosis_done",
+        for expected in ("round_start", "batch_done", "diagnosis_done",
                          "proposal_done", "gate_decision", "round_end"):
             assert expected in rnames, f"round {r} missing {expected}: {rnames}"
     # The losing strategy then the winner -> at least 2 gate decisions in round 1.

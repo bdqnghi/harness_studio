@@ -72,28 +72,28 @@ class Gate:
         *,
         regression_tasks: list[str] | None = None,
         borderline_extra_runs: int = 5,
-        aggregate_accept: bool = False,
+        strict_dual: bool = False,
     ) -> None:
         self.benchmark = benchmark
         self.judging = list(judging_tasks)
-        # Dual-split (Self-Harness): a disjoint regression set checked at every
-        # accept. None/empty -> single-split do-no-harm (legacy path).
+        # A disjoint do-no-harm set, pooled with the held-in (judging) set into
+        # the NET decision. None/empty -> single-split do-no-harm.
         self.regression = list(regression_tasks or [])
         self.wobble = max(0.0, wobble)
         self.extra = max(0, borderline_extra_runs)
-        # aggregate_accept (off by default): score the edit on the POOLED held-in
-        # set (judging ∪ regression) and accept on the pooled gain, instead of
-        # requiring EACH slice to independently not-regress. The strict dual
-        # split rejects an edit that genuinely helps overall when it lands on
-        # tasks in one slice and the other slice wobbles negative from noise —
-        # a real failure mode on noisy benchmarks (observed on tau2 cold-start).
-        self.aggregate_accept = aggregate_accept
+        # Default: accept on the NET pooled gain over held_in ∪ regression, so a
+        # real overall lift is kept even when one slice dips a little within
+        # noise. Measurement variance dominates here, so a small regression must
+        # not veto a genuine net improvement. ``strict_dual`` opts into the
+        # stricter Self-Harness rule (each slice must independently not-regress)
+        # for the rare case where ANY regression is unacceptable.
+        self.strict_dual = strict_dual
 
     def evaluate(self, old: Harness, new: Harness, *, additive: bool = False) -> GateDecision:
-        if self.regression and self.aggregate_accept:
-            return self._evaluate_aggregate(old, new, additive=additive)
-        if self.regression:
+        if self.regression and self.strict_dual:
             return self._evaluate_dual(old, new, additive=additive)
+        if self.regression:
+            return self._evaluate_aggregate(old, new, additive=additive)
         if not self.judging:
             # No judging tasks = no evidence the edit is safe. Do-no-harm needs a
             # signal to clear; with none, stay conservative and reject.

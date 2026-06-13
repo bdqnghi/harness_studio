@@ -134,21 +134,18 @@ def test_locked_tasks_stay_outside_optimizer_and_live_harness_is_graded(
         return next(targets), src, part_map, "openai/gpt-5.4"
 
     split = TaskSplit(
-        practice=["practice"],
-        judging=["judge"],
+        held_in=["practice"],          # the failing task the optimizer must fix
         regression=["regression"],
-        audit=["audit"],
-        final_exam=["locked"],
+        held_out=["locked"],
     )
     plan = SplitPlan(
         mode="holdout",
         k=3,
         split=split,
         sigma2=0.2,
-        n_pool=1,
-        n_judging=1,
+        n_held_in=1,
         n_regression=1,
-        n_test=1,
+        n_held_out=1,
         detectable_round=1.0,
         detectable_final=1.0,
         recommend="split",
@@ -212,8 +209,7 @@ def test_cell_config_routes_optimizer_and_score_cache(tmp_path):
     args = _args(tmp_path)
     args.optimizer = "tree"
     args.hypotheses = 2
-    split = TaskSplit(practice=["p"], judging=["j"], regression=["r"],
-                      audit=["a"], final_exam=[])
+    split = TaskSplit(held_in=["p", "j"], regression=["r"], held_out=[])
     cfg = compare._cell_config(split, seed=3, args=args,
                                score_cache=str(tmp_path / "scores.jsonl"))
     assert cfg.loop.optimizer == "tree"

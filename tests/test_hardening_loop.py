@@ -10,10 +10,8 @@ from studio.config import Config, EditConfig, LoopConfig
 from studio.orchestrator import Orchestrator
 
 SPLIT = TaskSplit(
-    judging=[f"{f}-{i}" for f in FAMILIES for i in (0, 1)],
-    final_exam=[f"{f}-{i}" for f in FAMILIES for i in (2, 3)],
-    audit=[f"{f}-{i}" for f in FAMILIES for i in (4, 5)],
-    practice=[f"{f}-{i}" for f in FAMILIES for i in (6, 7, 8, 9, 10, 11)],
+    held_in=[f"{f}-{i}" for f in FAMILIES for i in (0, 1, 4, 5, 6, 7, 8, 9, 10, 11)],
+    held_out=[f"{f}-{i}" for f in FAMILIES for i in (2, 3)],
 )
 DIAG = [{"pattern_id": "p", "description": "x", "root_cause": "x",
          "failing_task_ids": ["reverse-0"], "blamed_part": "tool_code", "confidence": 0.5}]

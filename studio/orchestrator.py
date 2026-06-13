@@ -33,7 +33,7 @@ from .components.family_map import FamilyMap, init_map
 from .components.gate import Gate
 from .components.idea_tree import IdeaTree, classify_rejection, mutation_event
 from .components.snapshotter import Snapshotter
-from .components.splitter import TaskSplit, sample_practice, split_tasks
+from .components.splitter import TaskSplit, sample_held_in, split_tasks
 from .components.strategist import Strategy
 from .config import Config
 from .harness import Harness
@@ -96,10 +96,10 @@ class Orchestrator:
             benchmark.list_tasks(), config.piles, seed=config.seed
         )
         # Fail fast on a misconfiguration that would silently do nothing: tasks
-        # exist but the practice pool is empty (piles over-allocate the total).
-        if self.benchmark.list_tasks() and not self.split.practice:
+        # exist but the held-in pool is empty (piles over-allocate the total).
+        if self.benchmark.list_tasks() and not self.split.held_in:
             raise ValueError(
-                "practice pool is empty; reduce pile sizes relative to task count"
+                "held-in pool is empty; reduce pile sizes relative to task count"
             )
         # An explicit part map (test/toy) overrides running the AI Mapper; when
         # the Mapper produced it, we re-map at each segment boundary.
@@ -129,15 +129,15 @@ class Orchestrator:
     # --- setup ---
 
     def _final_score(self) -> float:
-        scores = self.benchmark.run(self.harness, self.split.final_exam, run_idx=0)
+        scores = self.benchmark.run(self.harness, self.split.held_out, run_idx=0)
         return sum(scores.values()) / len(scores) if scores else 0.0
 
-    def _judging_score(self) -> float:
-        scores = self.benchmark.run(self.harness, self.split.judging, run_idx=0)
+    def _held_in_score(self) -> float:
+        scores = self.benchmark.run(self.harness, self.split.held_in, run_idx=0)
         return sum(scores.values()) / len(scores) if scores else 0.0
 
     def _audit_score(self) -> float:
-        scores = self.benchmark.run(self.harness, self.split.audit, run_idx=0)
+        scores = self.benchmark.run(self.harness, self.split.held_in, run_idx=0)
         return sum(scores.values()) / len(scores) if scores else 0.0
 
     # --- the two loops ---
@@ -148,13 +148,13 @@ class Orchestrator:
             optimizer=getattr(self.config.loop, "optimizer", "classic"),
             rounds=self.config.loop.rounds,
             segment_length=self.config.loop.segment_length,
-            n_judging=len(self.split.judging),
+            n_held_in=len(self.split.held_in),
             n_regression=len(self.split.regression),
-            n_practice_pool=len(self.split.practice),
+            n_held_out=len(self.split.held_out),
         )
         baseline_final = self._final_score()
-        judging_wobble = wobble.measure_wobble(
-            self.benchmark, self.harness, self.split.judging,
+        held_in_wobble = wobble.measure_wobble(
+            self.benchmark, self.harness, self.split.held_in,
             runs=self.config.loop.wobble_runs,
         )
         regression_wobble = (
@@ -164,8 +164,8 @@ class Orchestrator:
             )
             if self.split.regression else 0.0
         )
-        self.state.wobble = max(judging_wobble, regression_wobble)
-        self.snapshotter.save(self.harness, 0, self._judging_score())
+        self.state.wobble = max(held_in_wobble, regression_wobble)
+        self.snapshotter.save(self.harness, 0, self._held_in_score())
         # Seed the deep-audit "best so far" with the baseline harness.
         self._best_audit_score = self._audit_score()
         self.harness.copy_to(self._best_dir)
@@ -234,7 +234,7 @@ class Orchestrator:
         """Deep-audit the segment, rewind a secret regression, and update the
         family map by rule. Returns (verdict, was_plateau). Resets the segment."""
         verdict = deep_auditor.audit(
-            self.benchmark, self.harness, self.split.audit,
+            self.benchmark, self.harness, self.split.held_in,
             best_score=self._best_audit_score, wobble=self.state.wobble,
         )
         traps: list[str] = []
@@ -326,15 +326,15 @@ class Orchestrator:
 
     def _round(self, round_idx: int) -> None:
         # 1. Find failures, then diagnose + blame.
-        practice = sample_practice(
-            self.split, self.config.piles.practice, self.config.seed, round_idx
+        batch = sample_held_in(
+            self.split, self.config.piles.round_size, self.config.seed, round_idx
         )
-        report = runner.run_practice(self.benchmark, self.harness, practice)
-        self.progress.emit("practice_done", round=round_idx,
+        report = runner.run_batch(self.benchmark, self.harness, batch)
+        self.progress.emit("batch_done", round=round_idx,
                            pass_rate=round(report.pass_rate, 4),
                            n_failures=len(report.failures))
         if not report.failures:
-            self._reject(round_idx, "no failures on the practice batch")
+            self._reject(round_idx, "no failures on the held-in batch")
             return
         diagnosis = diagnoser.diagnose(self.backend, report.failures)
         self.progress.emit("diagnosis_done", round=round_idx,
@@ -422,10 +422,10 @@ class Orchestrator:
 
     def _test_in_order(self, round_idx: int, strategies: list[Strategy]) -> None:
         gate = Gate(
-            self.benchmark, self.split.judging, self.state.wobble,
+            self.benchmark, self.split.held_in, self.state.wobble,
             regression_tasks=self.split.regression,  # dual-split when populated (choose_split); [] -> single-split
             borderline_extra_runs=self.config.gate.borderline_extra_runs,
-            aggregate_accept=self.config.gate.aggregate_accept,
+            strict_dual=self.config.gate.strict_dual,
         )
         last_note = "no strategy passed the gate"
         for s in strategies:
@@ -466,7 +466,7 @@ class Orchestrator:
                     decision.new_score, family_label=s.family_label,
                     note=f"{s.strategy_id} accepted: {decision.reason}",
                 ))
-                self.snapshotter.save(self.harness, round_idx, self._judging_score())
+                self.snapshotter.save(self.harness, round_idx, self._held_in_score())
                 return
             last_note = f"{s.strategy_id} rejected: {decision.reason}"
         # Strategies were produced and tested but none passed the gate: this is a
@@ -478,7 +478,7 @@ class Orchestrator:
     def _reject(self, round_idx: int, note: str, *, empty: bool = True) -> None:
         if empty:  # nothing testable was produced (dropped at shell/review, or no failures)
             self.state.health.empty_rounds += 1
-        score = self._judging_score()
+        score = self._held_in_score()
         self.state.record(
             RoundOutcome(round_idx, False, 0.0, score, score, note=note)
         )
@@ -503,15 +503,15 @@ class Orchestrator:
     # insights propagate to future ideation.
 
     def _round_tree(self, round_idx: int) -> None:
-        practice = sample_practice(
-            self.split, self.config.piles.practice, self.config.seed, round_idx
+        batch = sample_held_in(
+            self.split, self.config.piles.round_size, self.config.seed, round_idx
         )
-        report = runner.run_practice(self.benchmark, self.harness, practice)
-        self.progress.emit("practice_done", round=round_idx,
+        report = runner.run_batch(self.benchmark, self.harness, batch)
+        self.progress.emit("batch_done", round=round_idx,
                            pass_rate=round(report.pass_rate, 4),
                            n_failures=len(report.failures))
         if not report.failures:
-            self._reject(round_idx, "no failures on the practice batch")
+            self._reject(round_idx, "no failures on the held-in batch")
             return
         diagnosis = diagnoser.diagnose(self.backend, report.failures)
         self.progress.emit("diagnosis_done", round=round_idx,
@@ -618,10 +618,10 @@ class Orchestrator:
     def _test_tree(self, round_idx: int, direction, node, s: Strategy,
                    diagnosis: list[dict]) -> None:
         gate = Gate(
-            self.benchmark, self.split.judging, self.state.wobble,
+            self.benchmark, self.split.held_in, self.state.wobble,
             regression_tasks=self.split.regression,
             borderline_extra_runs=self.config.gate.borderline_extra_runs,
-            aggregate_accept=self.config.gate.aggregate_accept,
+            strict_dual=self.config.gate.strict_dual,
         )
         struct = structural_check.check(
             s.candidate, self.benchmark, backend=self.backend,
@@ -650,7 +650,7 @@ class Orchestrator:
                            strategy_id=s.strategy_id, additive=additive,
                            **decision_dict(decision))
         evidence = {
-            "gain_judging": round(decision.gain, 4),
+            "gain_held_in": round(decision.gain, 4),
             "gain_regression": round(decision.regression_gain, 4),
             "runs_used": decision.runs_used, "borderline": decision.borderline,
         }
@@ -674,7 +674,7 @@ class Orchestrator:
                 decision.new_score, family_label=label,
                 note=f"{s.strategy_id} accepted: {decision.reason}",
             ))
-            self.snapshotter.save(self.harness, round_idx, self._judging_score())
+            self.snapshotter.save(self.harness, round_idx, self._held_in_score())
             return
 
         status = classify_rejection(decision, self.state.wobble)
@@ -714,7 +714,7 @@ class Orchestrator:
         falsifying the segment's accepted nodes (the tree's version of the
         family-map trap rule)."""
         verdict = deep_auditor.audit(
-            self.benchmark, self.harness, self.split.audit,
+            self.benchmark, self.harness, self.split.held_in,
             best_score=self._best_audit_score, wobble=self.state.wobble,
         )
         if verdict.verdict == "worse":

@@ -134,9 +134,8 @@ def _cell_config(split, *, seed, args, score_cache: str = "") -> Config:
     return Config(
         seed=seed,
         score_cache=score_cache,
-        piles=PileConfig(practice=min(args.round_size, max(1, len(split.practice))),
-                         judging=len(split.judging), audit=len(split.audit),
-                         final_exam=len(split.final_exam)),
+        piles=PileConfig(round_size=min(args.round_size, max(1, len(split.held_in))),
+                         regression=len(split.regression), held_out=len(split.held_out)),
         loop=LoopConfig(rounds=args.rounds, segment_length=args.segment_length,
                         wobble_runs=args.wobble_runs, strategies_per_round=args.strategies,
                         optimizer=args.optimizer,
@@ -271,13 +270,13 @@ def run_cell(args) -> dict:
 
     if args.dry_run:
         hv_gate = sum(
-            1 for t in (set(split.judging) | set(split.regression) | set(split.audit))
+            1 for t in (set(split.held_in) | set(split.regression))
             if timeouts.get(t, 0.0) >= args.heavy_sec
         )
         print(f"plan [{plan.mode}]: {plan.rationale}")
-        print(f"  pool={len(split.practice)} judging={len(split.judging)} "
-              f"regression={len(split.regression)} audit={len(split.audit)} "
-              f"test={len(split.final_exam)} | heavy-in-gate={hv_gate}")
+        print(f"  held_in={len(split.held_in)} "
+              f"regression={len(split.regression)}  "
+              f"test={len(split.held_out)} | heavy-in-gate={hv_gate}")
         print("[dry-run] no Docker, no model calls, no spend.")
         return {"cell": f"{args.harness}:{cell_name}", "mode": plan.mode, "dry_run": True}
 
@@ -287,7 +286,7 @@ def run_cell(args) -> dict:
             "is configured; refusing to optimize or emit a verdict"
         )
 
-    calibration_tasks = list(dict.fromkeys(split.practice + split.regression))
+    calibration_tasks = list(dict.fromkeys(split.held_in + split.regression))
     if provided:
         cal = _provided_baseline(args, calibration_tasks, timeouts)
         sigma2 = cal.sigma2
@@ -322,21 +321,21 @@ def run_cell(args) -> dict:
         plan,
         sigma2=sigma2,
         detectable_round=detectable_delta(
-            len(split.judging), sigma2, k=args.opt_k
+            len(split.held_in), sigma2, k=args.opt_k
         ),
         detectable_final=detectable_delta(
-            len(split.final_exam), sigma2, k=args.test_k
+            len(split.held_out), sigma2, k=args.test_k
         ),
     )
 
     hv_gate = sum(
-        1 for t in (set(split.judging) | set(split.regression) | set(split.audit))
+        1 for t in (set(split.held_in) | set(split.regression))
         if timeouts.get(t, 0.0) >= args.heavy_sec
     )
     print(f"plan [{plan.mode}]: {plan.rationale}")
-    print(f"  pool={len(split.practice)} judging={len(split.judging)} "
-          f"regression={len(split.regression)} audit={len(split.audit)} "
-          f"test={len(split.final_exam)} | heavy-in-gate={hv_gate} | "
+    print(f"  held_in={len(split.held_in)} "
+          f"regression={len(split.regression)}  "
+          f"test={len(split.held_out)} | heavy-in-gate={hv_gate} | "
           f"calibrated detectable round={plan.detectable_round:.3f} "
           f"test={plan.detectable_final:.3f}")
 
@@ -345,7 +344,7 @@ def run_cell(args) -> dict:
     # --- step 2: optimize on the held-in pool (gated by pool + regression) ---
     # The optimizer never receives locked task ids. Only the external verdict
     # below can access them.
-    optimization_split = replace(split, final_exam=[])
+    optimization_split = replace(split, held_out=[])
     cfg = _cell_config(optimization_split, seed=args.seed, args=args,
                        score_cache=str(score_cache))
     orch = Orchestrator(workspace=ws, source_harness=src, benchmark=opt_bench,
@@ -355,9 +354,9 @@ def run_cell(args) -> dict:
     optimized = orch.harness
 
     # --- step 3: verdict on the LOCKED test at test_k ---
-    base = test_bench.run(src, split.final_exam, run_idx=0)
-    opt = test_bench.run(optimized, split.final_exam, run_idx=0)
-    per_task_lift = {t: opt.get(t, 0.0) - base.get(t, 0.0) for t in split.final_exam}
+    base = test_bench.run(src, split.held_out, run_idx=0)
+    opt = test_bench.run(optimized, split.held_out, run_idx=0)
+    per_task_lift = {t: opt.get(t, 0.0) - base.get(t, 0.0) for t in split.held_out}
 
     lift = statistics.mean(per_task_lift.values()) if per_task_lift else 0.0
     stdev = statistics.stdev(per_task_lift.values()) if len(per_task_lift) > 1 else 0.0

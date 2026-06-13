@@ -101,7 +101,7 @@ def test_runner_populates_trace(tmp_path):
 
     h = Harness(tmp_path / "h")
     (tmp_path / "h").mkdir()
-    report = runner.run_practice(_StubBench(), h, ["t1"])
+    report = runner.run_batch(_StubBench(), h, ["t1"])
     assert report.failures and report.failures[0].trace == "EVIDENCE for t1"
 
 

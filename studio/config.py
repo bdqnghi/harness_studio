@@ -14,12 +14,12 @@ from pathlib import Path
 
 @dataclass
 class PileConfig:
-    """Sizes for the four task piles (PRD §6). Practice is sampled per round."""
+    """Sizes for the task sets. ``round_size`` is the per-round batch sampled
+    from held_in; ``regression``/``held_out`` size the fixed-fallback split."""
 
-    practice: int = 12
-    judging: int = 16
-    audit: int = 24
-    final_exam: int = 24
+    round_size: int = 12      # per-round held-in batch (the SGD mini-batch)
+    regression: int = 0       # disjoint do-no-harm set (0 = none in the fixed fallback)
+    held_out: int = 24        # locked, graded once
 
 
 @dataclass
@@ -27,7 +27,7 @@ class GateConfig:
     """Gate tuning (PRD §5.8)."""
 
     borderline_extra_runs: int = 5  # capped re-runs for in-band decisions
-    aggregate_accept: bool = False  # accept on pooled held-in gain vs per-slice do-no-harm
+    strict_dual: bool = False  # require EACH slice not-regress (default: net pooled gain)
 
 
 @dataclass

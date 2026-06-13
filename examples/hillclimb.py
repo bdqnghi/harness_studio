@@ -34,26 +34,25 @@ from studio.config import Config, EditConfig, GateConfig, LoopConfig, PileConfig
 from studio.targets import TargetConfig, get_target, list_targets  # noqa: E402
 
 
-def simple_split(tasks: list[str], *, seed: int, held_out: int, reg: int,
-                 judging: int, audit: int) -> TaskSplit:
-    """Deterministic split for fast benchmarks (no heavy-task handling needed).
+def simple_split(tasks: list[str], *, seed: int, held_in: int, reg: int,
+                 held_out_cap: int = 0) -> TaskSplit:
+    """Deterministic 3-set split for fast benchmarks (no heavy-task handling).
 
-    final_exam (locked) | regression (disjoint do-no-harm) | practice pool
-    (judging + audit are slices of the pool)."""
+    held_in is a SMALL FIXED SCOOP (the gate scores old-vs-new on it AND each
+    round samples a batch from it — so it must stay cheap); regression is a
+    disjoint do-no-harm slice; held_out is the locked test (capped, since every
+    held_out task is graded at test_k twice — surplus beyond the cap is unused)."""
     import hashlib
 
     order = sorted(tasks, key=lambda t: hashlib.sha256(f"{seed}:{t}".encode()).hexdigest())
-    held_out = min(held_out, max(0, len(order) - 4))
-    final_exam = order[:held_out]
-    rest = order[held_out:]
-    regression = rest[:reg]
-    pool = rest[reg:]
-    if not pool:  # tiny task sets: borrow back from regression
-        pool, regression = regression, []
-    judging = pool[: min(judging, len(pool))] or pool[:1]
-    audit = pool[: min(audit, len(pool))] or judging
-    return TaskSplit(practice=pool, judging=judging, audit=audit,
-                     final_exam=final_exam, regression=regression)
+    hi = min(held_in, max(0, len(order) - reg - 4))  # leave >=4 for a locked test
+    held_in_set = order[:hi]
+    regression = order[hi:hi + reg]
+    rest = order[hi + reg:]
+    held_out = rest[:held_out_cap] if held_out_cap else rest
+    if not held_in_set:  # degenerate tiny sets: fall back to using regression
+        held_in_set, regression = regression, []
+    return TaskSplit(held_in=held_in_set, regression=regression, held_out=held_out)
 
 
 def run(args) -> dict:
@@ -72,31 +71,24 @@ def run(args) -> dict:
     tasks = opt_bench.list_tasks()
     if not tasks:
         raise SystemExit(f"target {args.target} returned no tasks")
-    # Scale the split to task count: locked test gets ~40% (capped at --held-out),
-    # the rest is held-in (regression + pool); clamp slices to what's available.
-    n = len(tasks)
-    held_out = min(args.held_out, max(4, int(round(n * 0.4))))
-    avail = n - held_out
-    reg = min(args.reg, max(0, avail // 3))
-    pool_n = avail - reg
-    judging = min(args.judging, pool_n)
-    audit = min(args.audit, pool_n)
-    split = simple_split(tasks, seed=args.seed, held_out=held_out, reg=reg,
-                         judging=judging, audit=audit)
+    # held_in is a small fixed scoop (kept cheap because the gate scores on it
+    # every round); regression is the do-no-harm slice; the rest is locked held_out.
+    split = simple_split(tasks, seed=args.seed, held_in=args.held_in, reg=args.reg,
+                         held_out_cap=args.held_out)
 
     mode = "cold-start" if (args.cold_start or target.seed_harness() is None) else "warm-start"
     print(f"=== hillclimb: target={args.target} mode={mode} model={args.model} "
           f"optimizer={args.optimizer} localizer={args.localizer} ===")
-    print(f"tasks N={len(tasks)} | held-in pool={len(split.practice)} judging={len(split.judging)} "
-          f"regression={len(split.regression)} audit={len(split.audit)} | locked test={len(split.final_exam)}")
+    print(f"tasks N={len(tasks)} | held_in={len(split.held_in)} "
+          f"regression={len(split.regression)} | locked held_out={len(split.held_out)}")
     print(f"baseline bar: {target.baseline_score} ({target.baseline_note})")
-    det = detectable_delta(len(split.final_exam), args.sigma2, k=args.test_k) if split.final_exam else 0.0
-    print(f"detectable on locked test @k={args.test_k}: ~{det:.3f}")
+    det = detectable_delta(len(split.held_out), args.sigma2, k=args.test_k) if split.held_out else 0.0
+    print(f"detectable on locked held_out @k={args.test_k}: ~{det:.3f}")
     if args.dry_run:
         print("[dry-run] no spend.")
         return {"target": args.target, "mode": mode, "dry_run": True,
-                "n_tasks": len(tasks), "split": {"pool": len(split.practice),
-                "test": len(split.final_exam)}, "baseline": target.baseline_score}
+                "n_tasks": len(tasks), "split": {"held_in": len(split.held_in),
+                "held_out": len(split.held_out)}, "baseline": target.baseline_score}
 
     backend = make_backend(proposer_model, log_dir=ws / "proposer-logs")
 
@@ -113,18 +105,17 @@ def run(args) -> dict:
     cfg = Config(
         seed=args.seed,
         score_cache=str(ws / "score_cache.jsonl"),
-        piles=PileConfig(practice=min(args.round_size, len(split.practice)),
-                         judging=len(split.judging), audit=len(split.audit),
-                         final_exam=0),
+        piles=PileConfig(round_size=min(args.round_size, len(split.held_in)),
+                         regression=0, held_out=0),
         loop=LoopConfig(rounds=args.rounds, segment_length=args.segment_length,
                         wobble_runs=args.wobble_runs, strategies_per_round=args.strategies,
                         optimizer=args.optimizer, hypotheses_per_direction=args.hypotheses,
                         localizer=args.localizer),
         gate=GateConfig(borderline_extra_runs=args.borderline_runs,
-                        aggregate_accept=args.aggregate_accept),
+                        strict_dual=args.strict_gate),
         edits=EditConfig(budget_per_part=args.budget),
     )
-    optimization_split = replace(split, final_exam=[])  # optimizer never sees locked test
+    optimization_split = replace(split, held_out=[])  # optimizer never sees locked test
     orch = Orchestrator(workspace=ws, source_harness=seed, benchmark=opt_bench,
                         backend=backend, config=cfg, part_map=target.part_map(),
                         split=optimization_split)
@@ -132,16 +123,16 @@ def run(args) -> dict:
     optimized = orch.harness
 
     # verdict on the locked test at test_k: seed vs optimized, paired per-task lift.
-    base = test_bench.run(seed, split.final_exam, run_idx=0)
-    opt = test_bench.run(optimized, split.final_exam, run_idx=0)
-    per_task = {t: opt.get(t, 0.0) - base.get(t, 0.0) for t in split.final_exam}
+    base = test_bench.run(seed, split.held_out, run_idx=0)
+    opt = test_bench.run(optimized, split.held_out, run_idx=0)
+    per_task = {t: opt.get(t, 0.0) - base.get(t, 0.0) for t in split.held_out}
     base_mean = statistics.mean(base.values()) if base else 0.0
     opt_mean = statistics.mean(opt.values()) if opt else 0.0
     lift = statistics.mean(per_task.values()) if per_task else 0.0
     se = (statistics.stdev(per_task.values()) / len(per_task) ** 0.5) if len(per_task) > 1 else 0.0
     result = {
         "target": args.target, "mode": mode, "model": args.model,
-        "n_test": len(split.final_exam),
+        "n_test": len(split.held_out),
         "baseline_harness_score": round(base_mean, 4),
         "optimized_harness_score": round(opt_mean, 4),
         "lift": round(lift, 4), "se": round(se, 4),
@@ -170,10 +161,10 @@ def main() -> None:
     ap.add_argument("--localizer", choices=("off", "inline", "agentic", "auto"),
                     default="auto", help="evidence-grounded context localization "
                     "(off=legacy diagnosis-only); applies to both optimizer paths")
-    ap.add_argument("--aggregate-accept", action="store_true",
-                    help="gate accepts on POOLED held-in gain (judging∪regression) "
-                         "instead of per-slice do-no-harm — for noisy benchmarks where "
-                         "gains land on one slice")
+    ap.add_argument("--strict-gate", action="store_true",
+                    help="require EACH slice (held_in AND regression) to not-regress; "
+                         "default is net pooled gain (a small within-noise regression "
+                         "never vetoes a real overall lift)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--workspace", default="/tmp/sho_hillclimb")
     ap.add_argument("--rounds", type=int, default=8)
@@ -189,10 +180,11 @@ def main() -> None:
     ap.add_argument("--n-concurrent", type=int, default=8)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--sigma2", type=float, default=0.2, help="noise prior for the detectable-delta report")
-    ap.add_argument("--held-out", type=int, default=40, help="locked test size")
-    ap.add_argument("--reg", type=int, default=16, help="regression (do-no-harm) set size")
-    ap.add_argument("--judging", type=int, default=16, help="stable gate slice of the pool")
-    ap.add_argument("--audit", type=int, default=8, help="deep-audit slice of the pool")
+    ap.add_argument("--held-in", type=int, default=16,
+                    help="held-in scoop the gate scores on each round (keep small/cheap)")
+    ap.add_argument("--reg", type=int, default=10, help="regression (do-no-harm) set size")
+    ap.add_argument("--held-out", type=int, default=24,
+                    help="locked test cap (0=all surplus); each is graded at test_k twice")
     args = ap.parse_args()
     run(args)
 

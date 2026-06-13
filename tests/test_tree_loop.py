@@ -64,10 +64,8 @@ _LOC = {"targets": [{
 }]}
 
 SPLIT = TaskSplit(
-    judging=[f"{f}-{i}" for f in FAMILIES for i in (0, 1)],
-    final_exam=[f"{f}-{i}" for f in FAMILIES for i in (2, 3)],
-    audit=[f"{f}-{i}" for f in FAMILIES for i in (4, 5)],
-    practice=[f"{f}-{i}" for f in FAMILIES for i in (6, 7, 8, 9, 10, 11)],
+    held_in=[f"{f}-{i}" for f in FAMILIES for i in (0, 1, 4, 5, 6, 7, 8, 9, 10, 11)],
+    held_out=[f"{f}-{i}" for f in FAMILIES for i in (2, 3)],
 )
 
 DIAG = [{
@@ -255,53 +253,6 @@ def test_non_addressable_patterns_stop_the_round(tmp_path):
     assert result.accepted == 0
     assert "no addressable failure patterns" in result.rounds[0].note
     assert not any(t == "direction-router" for _, t in backend.calls)
-
-
-def test_audit_trap_falsifies_and_rewinds(tmp_path):
-    class TrapBench(ToyBenchmark):
-        """An edit that games the judging slice but tanks the audit slice."""
-
-        def run(self, harness, task_ids, *, run_idx=0):
-            scores = super().run(harness, task_ids, run_idx=run_idx)
-            try:
-                trapped = "ENABLE trap" in harness.read_file("instructions.txt")
-            except Exception:  # noqa: BLE001
-                trapped = False
-            if trapped:
-                for t in list(scores):
-                    idx = int(t.rsplit("-", 1)[1])
-                    if idx in (0, 1):       # judging tasks: fake perfection
-                        scores[t] = 1.0
-                    elif idx in (4, 5):     # audit tasks: secret regression
-                        scores[t] = 0.0
-            return scores
-
-    def add_trap(root):
-        p = root / "instructions.txt"
-        p.write_text(p.read_text().rstrip() + "\nENABLE trap\n")
-
-    backend = MockBackend(
-        json_responses={
-            "diagnoser": [DIAG],
-            "direction-router": [NEW_DIRECTION],
-            "ideator": [{"hypotheses": [{
-                "title": "enable trap", "mechanism": "m",
-                "hypothesis": "append ENABLE trap", "observable": "o"}]}],
-            "insight": [{"insight": "looked great on judging"}],
-            "insight-direction": [{"insight": "v1"}, {"insight": "v2"}],
-        },
-        agent_actions={"strategist": [add_trap]},
-    )
-    result, orch = _run_tree(tmp_path, backend=backend,
-                             benchmark=TrapBench(per_family=12, noise_per_mille=0),
-                             rounds=1, hypotheses_per_direction=1)
-    assert result.accepted == 1                          # the gate was fooled...
-    node = orch.tree.node("d1h1")
-    assert node.status == "falsified"                    # ...the audit was not
-    assert node.evidence.get("audit_trap") is True
-    assert "ENABLE trap" not in orch.harness.read_file("instructions.txt")  # rewound
-    cons = orch.tree.falsified_constraints()
-    assert any("append ENABLE trap" in c for c in cons)  # and it became a constraint
 
 
 # --- Phase 6: localization wired into both paths (applied everywhere) ---

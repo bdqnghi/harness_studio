@@ -19,20 +19,20 @@ def test_gate_empty_judging_set_does_not_crash(tmp_path):
 
 def test_splitter_caps_when_piles_exceed_tasks():
     tasks = [f"t{i}" for i in range(5)]
-    piles = PileConfig(practice=10, judging=10, audit=10, final_exam=10)
+    piles = PileConfig(round_size=10, regression=10, held_out=10)
     split = split_tasks(tasks, piles, seed=1)
-    allocated = split.practice + split.judging + split.audit + split.final_exam
+    allocated = split.held_in + split.regression + split.held_out
     assert sorted(allocated) == sorted(tasks)  # disjoint + total preserved
     assert len(set(allocated)) == len(tasks)   # no duplicates
 
 
 def test_splitter_piles_are_disjoint():
     tasks = [f"t{i}" for i in range(40)]
-    s = split_tasks(tasks, PileConfig(), seed=7)
-    piles = [set(s.practice), set(s.judging), set(s.audit), set(s.final_exam)]
-    for i in range(len(piles)):
-        for j in range(i + 1, len(piles)):
-            assert piles[i].isdisjoint(piles[j])
+    s = split_tasks(tasks, PileConfig(regression=8), seed=7)
+    sets = [set(s.held_in), set(s.regression), set(s.held_out)]
+    for i in range(len(sets)):
+        for j in range(i + 1, len(sets)):
+            assert sets[i].isdisjoint(sets[j])
 
 
 def test_family_map_name_parsing_handles_colons_in_reason():
