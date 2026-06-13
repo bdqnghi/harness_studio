@@ -256,25 +256,5 @@ LOCALIZATION = {
     },
 }
 
-# Cold-start synthesis: fill a minimal agent template from a ColdStartBrief.
-COLD_START = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["system_prompt", "tool_notes"],
-    "properties": {
-        "system_prompt": {"type": "string"},   # the initial agent system prompt
-        "tool_notes": {                          # one usage note per available tool
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["name", "note"],
-                "properties": {
-                    "name": {"type": "string"},
-                    "note": {"type": "string"},
-                },
-            },
-        },
-        "loop_guidance": {"type": "string"},     # optional: how to plan/iterate/stop
-    },
-}
+# (Cold-start no longer uses a fill schema: the coding agent generates the harness
+#  from scratch via strategist.build_harness — see components/strategist.py.)

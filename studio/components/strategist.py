@@ -21,11 +21,87 @@ from ..backends.base import AgentResult, Backend
 from ..harness import Harness
 
 TAG = "strategist"
+BUILD_TAG = "builder"
 SKILL_PATH = Path(__file__).resolve().parent.parent / "skills" / "strategist" / "SKILL.md"
+
+# Guidance for the GENERATE-from-scratch mode (workspace starts empty). Same
+# engine as editing — only the situation differs: there is nothing to edit yet,
+# so the agent writes a complete, runnable harness rather than a minimal diff.
+_BUILD_SKILL = """You are a coding agent building a NEW agent harness FROM SCRATCH. The workspace is empty.
+
+- Create a minimal but COMPLETE and runnable harness for the task: the file(s) the runtime
+  will execute (exactly as the runner contract requires), the tool wiring, and a working
+  control loop / operating instructions. It must boot and run end-to-end — no TODOs, no stubs.
+- Make sensible engineering choices; prefer the simplest design that fully satisfies the
+  contract. Use read_file/list_dir to inspect anything you write.
+- When the harness is complete and runnable, call complete_task with a short summary.
+"""
 
 
 def load_skill() -> str:
     return SKILL_PATH.read_text()
+
+
+def _build_instruction(brief) -> str:
+    tools = "\n".join(f"- {t.name}{_paren(t.signature)}: {t.doc}" for t in (brief.tools or [])) \
+        or "(the runtime provides the tools; wire them as the contract describes)"
+    notes = f"\nNotes: {brief.extra_notes}\n" if getattr(brief, "extra_notes", "") else ""
+    return (
+        "Build a new, runnable agent harness FROM SCRATCH for the task below. The workspace "
+        "is empty — create the files the runtime executes, wire the tools, and a working "
+        "control loop / operating policy. It MUST boot and run end-to-end.\n\n"
+        f"Task domain: {brief.domain}\n"
+        f"IO contract: {brief.io_contract}\n"
+        f"Available tools:\n{tools}\n"
+        f"Runner contract (what the benchmark will execute — your harness MUST expose this):\n"
+        f"{brief.runner_contract or '(produce the obvious runnable entrypoint for this task)'}\n"
+        f"{notes}\n"
+        "Create the files now, then call complete_task."
+    )
+
+
+def _paren(sig: str) -> str:
+    """Render just the arg list of a signature for a prompt listing."""
+    if "(" in sig:
+        return "(" + sig.split("(", 1)[1].split(")")[0] + ")"
+    return ""
+
+
+def build_harness(
+    backend: Backend,
+    workspace: Path,
+    brief,
+    *,
+    validate=None,
+    max_attempts: int = 2,
+    do_not_touch: list[str] | None = None,
+    model: str | None = None,
+) -> Harness:
+    """Generate a round-0 harness by running the SAME coding agent on an empty
+    workspace (no templates). If ``validate(harness) -> (ok, err)`` is given
+    (e.g. the benchmark's boot_check), retry up to ``max_attempts`` times,
+    feeding the error back — the agent decides how to fix its own output, exactly
+    as in the edit loop."""
+    workspace = Path(workspace)
+    workspace.mkdir(parents=True, exist_ok=True)
+    harness = Harness(workspace)
+    for rel, content in (getattr(brief, "seed_files", None) or {}).items():
+        harness.write_file(rel, content)
+
+    instruction = _build_instruction(brief)
+    for attempt in range(max(1, max_attempts)):
+        backend.run_agent(instruction, workspace=workspace, skill=_BUILD_SKILL,
+                          tag=BUILD_TAG, model=model)
+        if validate is None:
+            return harness
+        ok, err = validate(harness)
+        if ok:
+            return harness
+        instruction = (
+            "The harness you generated does not boot/run yet. Fix it so it boots and runs "
+            f"end-to-end, keeping the runner contract.\n\nError:\n{err}\n"
+        )
+    return harness  # caller still boot_checks and surfaces a clear error if invalid
 
 
 @dataclass

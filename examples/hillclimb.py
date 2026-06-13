@@ -100,8 +100,10 @@ def run(args) -> dict:
 
     backend = make_backend(proposer_model, log_dir=ws / "proposer-logs")
 
-    # round-0 harness: warm (shipped seed) or cold (synthesized from the brief).
-    seed = target.resolve_seed(backend, ws, force_cold=args.cold_start)
+    # round-0 harness: warm (shipped seed) or cold (the coding agent generates one
+    # from the brief, retrying until it boots).
+    seed = target.resolve_seed(backend, ws, force_cold=args.cold_start,
+                               validate=opt_bench.boot_check)
     ok, err = opt_bench.boot_check(seed)
     if not ok:
         raise SystemExit(f"seed harness failed boot_check: {err}")

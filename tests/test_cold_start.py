@@ -1,105 +1,94 @@
-"""Cold start: synthesize a runnable harness from a ColdStartBrief (no seed).
+"""Cold start: the coding agent GENERATES a runnable harness from a brief (no seed).
 
-This is the capability that lets SHO hill-climb a benchmark that ships no agent
-harness (e.g. BrowseComp): the optimizer's round-0 harness is generated, not
-provided."""
+There are no templates — cold start is the same coding-agent engine that edits the
+harness during hill-climbing, run on an empty workspace. In tests we script that
+agent with a MockBackend ``agent_action`` that writes the files the agent would
+write; the build loop validates the result (e.g. boot_check) and retries with the
+error fed back, exactly like the edit loop.
+"""
 
-import json
-
-from studio import schemas
 from studio.backends.mock import MockBackend
-from studio.components.cold_start import (
-    bootstrap_harness, cold_start_part_map,
-)
-from studio.parts import PartType
-from studio.targets import ColdStartBrief, Target, TargetConfig, ToolSpec, get_target, register
-
+from studio.components.strategist import BUILD_TAG, build_harness
+from studio.parts import PartMap, PartType
+from studio.targets import ColdStartBrief, Target, ToolSpec, get_target, register
 
 BRIEF = ColdStartBrief(
     domain="multi-hop web-search QA",
     io_contract="input: a question string; answer via finish(answer)",
-    tools=[
-        ToolSpec("search", "search(query: str) -> list[str]", "web search, returns snippets"),
-        ToolSpec("open", "open(url: str) -> str", "fetch page text"),
-        ToolSpec("finish", "finish(answer: str) -> None", "submit the final answer"),
-    ],
-    template="react",
+    tools=[ToolSpec("search", "search(query: str) -> list[str]", "web search")],
+    runner_contract="the runtime imports run_episode(task, call_model, tools) from agent.py",
 )
 
-SYNTH = {
-    "system_prompt": "You answer questions by searching the web. Use search and open, "
-                     "then call finish(answer).",
-    "tool_notes": [
-        {"name": "search", "note": "issue focused queries"},
-        {"name": "finish", "note": "call exactly once with the answer"},
-    ],
-    "loop_guidance": "Plan, search, read, verify, then finish.",
-}
+
+def _writes(*files):
+    """A scripted coding-agent action: write the given {path: content} files."""
+    def action(workspace):
+        for rel, content in files[0].items():
+            (workspace / rel).parent.mkdir(parents=True, exist_ok=True)
+            (workspace / rel).write_text(content)
+    return action
 
 
-def test_bootstrap_produces_runnable_react_harness(tmp_path):
-    backend = MockBackend(json_responses={"cold-start": [SYNTH]})
-    h = bootstrap_harness(backend, BRIEF, tmp_path / "cold")
-
-    files = set(h.files())
-    assert files == {"system_prompt.md", "tools.md", "tool_schemas.json", "agent.py", "config.json"}
-    # The synthesized prompt landed.
-    assert "searching the web" in h.read_file("system_prompt.md")
-    # Tool descriptions include each tool + the per-tool note.
-    tools_md = h.read_file("tools.md")
-    assert "search" in tools_md and "open" in tools_md and "finish" in tools_md
-    assert "issue focused queries" in tools_md
-    assert "Plan, search, read" in tools_md  # loop guidance folded in
-    # tool_schemas.json is valid JSON listing all 3 tools.
-    schema = json.loads(h.read_file("tool_schemas.json"))
-    assert {t["name"] for t in schema} == {"search", "open", "finish"}
-    # agent.py is valid Python with a run_episode loop and a real step cap.
-    agent = h.read_file("agent.py")
-    assert "def run_episode" in agent and "MAX_STEPS = 12" in agent
-    compile(agent, "agent.py", "exec")
-    # config.json parses with the step budget.
-    assert json.loads(h.read_file("config.json"))["max_steps"] == 12
+def test_build_runs_the_coding_agent_and_returns_generated_harness(tmp_path):
+    backend = MockBackend(agent_actions={BUILD_TAG: [
+        _writes({"agent.py": "def run_episode(t, call_model, tools):\n    return ''\n"})]})
+    h = build_harness(backend, tmp_path / "cold", BRIEF)
+    assert ("run_agent", BUILD_TAG) in backend.calls       # the coding agent ran
+    assert h.exists("agent.py")
+    # The brief (domain + runner contract + tool) drove the instruction.
+    _, instr = backend.prompt_log[0]
+    assert "FROM SCRATCH" in instr and "multi-hop web-search QA" in instr
+    assert "run_episode" in instr and "search" in instr
 
 
-def test_synthesis_failure_degrades_to_a_minimal_but_valid_harness(tmp_path):
-    # Model returns an empty/sparse object -> still produces a runnable harness
-    # (the optimizer can climb from a weak baseline; it must not crash).
-    backend = MockBackend(json_responses={"cold-start": [{"system_prompt": "", "tool_notes": []}]})
-    h = bootstrap_harness(backend, BRIEF, tmp_path / "cold")
-    assert "multi-hop web-search QA" in h.read_file("system_prompt.md")  # fallback prompt
-    compile(h.read_file("agent.py"), "agent.py", "exec")
+def test_build_seed_files_are_pre_dropped(tmp_path):
+    backend = MockBackend(agent_actions={BUILD_TAG: [lambda ws: None]})  # agent adds nothing
+    brief = ColdStartBrief(domain="d", io_contract="io", runner_contract="reads policy.md",
+                           seed_files={"policy.md": "# starter\n"})
+    h = build_harness(backend, tmp_path / "cold", brief)
+    assert h.read_file("policy.md") == "# starter\n"
 
 
-def test_cold_start_part_map_matches_template_files(tmp_path):
-    pm = cold_start_part_map("react")
-    assert pm.files_for(PartType.INSTRUCTIONS) == ["system_prompt.md"]
-    assert "tool_schemas.json" in pm.files_for(PartType.TOOL_DESCRIPTIONS)
-    assert "agent.py" in pm.files_for(PartType.MIDDLEWARE)
-    # Every mapped file is one the bootstrapper actually writes.
-    backend = MockBackend(json_responses={"cold-start": [SYNTH]})
-    h = bootstrap_harness(backend, BRIEF, tmp_path / "cold")
-    written = set(h.files())
-    for part in (PartType.INSTRUCTIONS, PartType.TOOL_DESCRIPTIONS, PartType.MIDDLEWARE):
-        for f in pm.files_for(part):
-            assert f in written
+def test_build_validates_and_retries_until_it_boots(tmp_path):
+    # First attempt writes a broken (empty) file -> validate fails -> second
+    # attempt fixes it. The agent decides how to fix, given the error.
+    backend = MockBackend(agent_actions={BUILD_TAG: [
+        _writes({"policy.md": ""}),                 # attempt 1: empty -> invalid
+        _writes({"policy.md": "real policy\n"}),    # attempt 2: valid
+    ]})
+
+    def validate(h):
+        ok = h.exists("policy.md") and h.read_file("policy.md").strip() != ""
+        return (ok, "" if ok else "policy.md is empty")
+
+    h = build_harness(backend, tmp_path / "cold", BRIEF, validate=validate, max_attempts=2)
+    assert h.read_file("policy.md") == "real policy\n"
+    assert sum(1 for k, t in backend.calls if t == BUILD_TAG) == 2   # retried once
+    # the retry instruction carried the validation error back to the agent
+    assert "policy.md is empty" in backend.prompt_log[1][1]
 
 
-def test_target_registry_and_cold_resolve(tmp_path):
-    # A registered cold-start target resolves a synthesized seed (no shipped harness).
+def test_build_stops_at_first_success(tmp_path):
+    backend = MockBackend(agent_actions={BUILD_TAG: [_writes({"policy.md": "ok\n"})]})
+    build_harness(backend, tmp_path / "cold", BRIEF,
+                  validate=lambda h: (True, ""), max_attempts=3)
+    assert sum(1 for k, t in backend.calls if t == BUILD_TAG) == 1   # no needless retries
+
+
+def test_target_cold_resolve_uses_the_builder(tmp_path):
     register("demo-cold", lambda: Target(
         name="demo-cold",
         make_benchmark=lambda cfg: None,
-        part_map=lambda: cold_start_part_map("react"),
+        part_map=lambda: PartMap(parts={PartType.INSTRUCTIONS: ["policy.md"]}, do_not_touch=[]),
         seed_harness=lambda: None,                 # cold start
         cold_start_brief=lambda: BRIEF,
         baseline_score=0.5,
     ))
     t = get_target("demo-cold")
     assert t.seed_harness() is None
-    backend = MockBackend(json_responses={"cold-start": [SYNTH]})
-    seed = t.resolve_seed(backend, tmp_path / "ws")
-    assert seed.exists("agent.py")
-    assert "searching the web" in seed.read_file("system_prompt.md")
+    backend = MockBackend(agent_actions={BUILD_TAG: [_writes({"policy.md": "p\n"})]})
+    seed = t.resolve_seed(backend, tmp_path / "ws", validate=lambda h: (True, ""))
+    assert seed.exists("policy.md")
 
 
 def test_warm_target_uses_seed_not_cold_start(tmp_path):
@@ -107,23 +96,8 @@ def test_warm_target_uses_seed_not_cold_start(tmp_path):
 
     src = build_toy_harness(tmp_path / "toy_src")
     register("demo-warm", lambda: Target(
-        name="demo-warm",
-        make_benchmark=lambda cfg: None,
-        part_map=toy_part_map,
-        seed_harness=lambda: src,
-        baseline_score=0.25,
-    ))
-    t = get_target("demo-warm")
-    # No backend needed: warm start copies the shipped seed.
-    seed = t.resolve_seed(None, tmp_path / "ws2")
-    assert seed.exists("tools.py")  # the toy harness, not a cold-start react harness
-    assert not seed.exists("agent.py")
-
-
-def test_cold_start_schema_validates():
-    schemas.validate(SYNTH, schemas.COLD_START)
-    try:
-        schemas.validate({"tool_notes": []}, schemas.COLD_START)  # missing system_prompt
-        raise AssertionError("should require system_prompt")
-    except schemas.SchemaError:
-        pass
+        name="demo-warm", make_benchmark=lambda cfg: None,
+        part_map=toy_part_map, seed_harness=lambda: src, baseline_score=0.25))
+    # No backend needed: warm start copies the shipped seed (never runs the agent).
+    seed = get_target("demo-warm").resolve_seed(None, tmp_path / "ws2")
+    assert seed.exists("tools.py")

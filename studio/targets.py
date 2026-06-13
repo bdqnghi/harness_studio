@@ -9,10 +9,11 @@ Two start modes:
 
 * **warm start** — ``seed_harness()`` returns the benchmark's shipped baseline
   harness; SHO mutates it and tries to beat the published ``baseline_score``.
-* **cold start** — ``seed_harness()`` returns ``None``; SHO *synthesizes* a
-  runnable harness from ``cold_start_brief()`` (see ``components.cold_start``)
-  and hill-climbs from there. This is what lets us wire a benchmark that ships
-  no agent harness at all (e.g. BrowseComp).
+* **cold start** — ``seed_harness()`` returns ``None``; SHO runs the coding agent
+  on an empty workspace to *generate* a runnable harness from ``cold_start_brief()``
+  (see ``strategist.build_harness``) — the same engine that edits it later — and
+  hill-climbs from there. This is what lets us wire a benchmark that ships no agent
+  harness at all.
 
 The key seam that makes this general is the existing ``Benchmark.run`` contract:
 "given a harness directory and some task ids, return per-task scores." Each
@@ -43,20 +44,24 @@ class ToolSpec:
 
 @dataclass
 class ColdStartBrief:
-    """The minimum a benchmark must declare to be cold-startable.
+    """The task spec a benchmark declares to be cold-startable.
 
-    From this, ``cold_start.bootstrap_harness`` synthesizes a runnable-but-
-    unoptimized harness (system prompt + tool wiring + agent loop) that the
-    optimizer then hill-climbs. Everything here is benchmark-agnostic prose +
-    tool signatures — no benchmark internals leak into the synthesis logic.
+    It is just the *input to the coding agent*: from this, ``strategist.build_harness``
+    runs the SAME coding-agent engine that edits the harness during hill-climbing —
+    on an empty workspace — to generate a runnable round-0 harness from scratch
+    (no templates, no skeletons). Everything here is benchmark-agnostic prose +
+    tool signatures; no benchmark internals leak into the generation logic.
     """
 
     domain: str                         # one line: "multi-hop web-search QA"
     io_contract: str                    # how a task is presented; what an answer/action looks like
     tools: list[ToolSpec] = field(default_factory=list)
-    template: str = "react"             # which built-in skeleton: "react" | "code" | "policy"
-    extra_notes: str = ""               # optional domain guidance for the initial prompt
-    extra_files: dict = field(default_factory=dict)  # extra {filename: bare seed content} to write
+    # What the benchmark will execute — the contract the generated harness MUST
+    # expose (entry file/function, or the file(s) the runtime reads). This is how
+    # the agent knows what to build so the benchmark can run it.
+    runner_contract: str = ""
+    extra_notes: str = ""               # optional domain guidance
+    seed_files: dict = field(default_factory=dict)  # optional {filename: starter content} pre-dropped
 
 
 @dataclass
@@ -90,14 +95,16 @@ class Target:
     baseline_note: str = ""
 
     def resolve_seed(
-        self, backend, workdir: Path, *, force_cold: bool = False
+        self, backend, workdir: Path, *, force_cold: bool = False, validate=None
     ) -> Harness:
         """Return the round-0 harness for the optimizer.
 
         Warm start unless there's no seed (or ``force_cold`` to demo cold-start
-        even where a baseline exists). Cold start synthesizes one from the brief.
-        Import is local so ``targets`` has no hard dependency on the synthesis
-        engine (and tests can stub it)."""
+        even where a baseline exists). Cold start runs the coding agent on an
+        empty workspace to GENERATE a harness from the brief — the same engine
+        that edits it later. ``validate`` (e.g. ``benchmark.boot_check``) lets the
+        agent retry until the generated harness boots. Import is local so
+        ``targets`` has no hard dependency on the coding engine."""
         seed = None if force_cold else self.seed_harness()
         if seed is not None:
             return seed.copy_to(Path(workdir) / "seed")
@@ -106,10 +113,11 @@ class Target:
                 f"target {self.name!r} has no seed harness and no cold_start_brief; "
                 "cannot start"
             )
-        from .components.cold_start import bootstrap_harness
+        from .components.strategist import build_harness
 
-        return bootstrap_harness(
-            backend, self.cold_start_brief(), Path(workdir) / "cold_seed"
+        return build_harness(
+            backend, Path(workdir) / "cold_seed", self.cold_start_brief(),
+            validate=validate,
         )
 
 

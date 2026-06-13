@@ -40,19 +40,27 @@ _TAU2_TOOLS = {
 
 
 def _tau2_brief(domain: str) -> ColdStartBrief:
-    from .benchmark.tau2 import AGENT_INSTRUCTION_FILE, instruction_injectable
+    from .benchmark.tau2 import (
+        AGENT_INSTRUCTION_FILE, instruction_injectable, policy_files_for,
+    )
 
-    # When tau2's source can consume a mutated agent instruction, also cold-seed
-    # a deliberately bare one (alongside the bare policy) so both levers have
-    # headroom and the cold harness matches the expanded editable surface.
-    extra = {}
+    # The contract the runtime executes: the agent reads its operating policy
+    # (and, when the source supports it, a behavioral instruction) from these
+    # file(s). The coding agent generates them so the harness is runnable.
+    files = list(policy_files_for(domain))
     if instruction_injectable():
-        extra[AGENT_INSTRUCTION_FILE] = (
-            "You are a customer-service agent. In each turn either send the user "
-            "a message OR make a tool call (not both). Use the tools to act.\n"
-        )
+        files.append(AGENT_INSTRUCTION_FILE)
+    runner_contract = (
+        "The runtime runs a customer-service agent that follows an operating policy "
+        f"read from these file(s): {', '.join(files)}. Write the policy as markdown prose "
+        "rules the agent must obey (identity verification before acting on an account, and "
+        "the domain's action/eligibility rules). "
+        + (f"Also write {AGENT_INSTRUCTION_FILE}: a short behavioral instruction (e.g. each "
+           "turn either message the user OR make a tool call, not both)."
+           if AGENT_INSTRUCTION_FILE in files else "")
+    )
     return ColdStartBrief(
-        domain=f"{domain} customer-service tool-use dialogue (tau2-bench)",
+        domain=f"{domain} customer-service tool-use dialogue",
         io_contract=(
             "Multi-turn dialogue with a customer. Resolve their request by calling "
             "the domain tools. The environment grades the final database state plus "
@@ -60,9 +68,8 @@ def _tau2_brief(domain: str) -> ColdStartBrief:
             "the right tool calls, not just describe them."
         ),
         tools=_TAU2_TOOLS.get(domain, []),
-        template="policy",
+        runner_contract=runner_contract,
         extra_notes="Follow the domain rules strictly; verify identity before acting on an account.",
-        extra_files=extra,
     )
 
 
