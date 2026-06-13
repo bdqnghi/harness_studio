@@ -110,3 +110,65 @@ def _tau2_target(domain: str, baseline: float) -> Target:
 
 for _dom, _bl in (("airline", 0.56), ("retail", 0.74), ("telecom", 0.34)):
     register(f"tau2-{_dom}", (lambda d=_dom, b=_bl: _tau2_target(d, b)))
+
+
+# --- QA suites (docker-free single-turn benchmarks: gsm8k, …) -----------------
+# The harness is a prompt policy (system_prompt.md); the grader is the fixed
+# trust anchor. See studio/benchmark/qa.py + qa_suites.py.
+
+def _qa_part_map():
+    from .parts import PartMap, PartType
+    from .benchmark.qa import PROMPT_FILE
+    return PartMap(parts={PartType.INSTRUCTIONS: [PROMPT_FILE]})
+
+
+def _qa_seed(suite, ws_prefix: str):
+    from .benchmark.qa import PROMPT_FILE
+    from .harness import Harness
+    d = Path(tempfile.mkdtemp(prefix=ws_prefix))
+    Harness(d).write_file(PROMPT_FILE, suite.seed_prompt)
+    return Harness(d)
+
+
+def _qa_brief(suite):
+    from .benchmark.qa import PROMPT_FILE
+    return ColdStartBrief(
+        domain=suite.domain or suite.name,
+        io_contract=suite.io_contract or "Answer the question in a single turn.",
+        runner_contract=(
+            f"The runtime reads the agent's instructions from {PROMPT_FILE} and uses "
+            "them as the system prompt for a single-turn answer to each question. "
+            "Write clear instructions plus the exact answer format the grader expects."
+        ),
+        extra_notes="No tools; one model turn per task. The answer format must be machine-parseable.",
+    )
+
+
+def _qa_target(suite_name: str) -> Target:
+    from .benchmark.qa import QABenchmark
+    from .benchmark.qa_suites import DEFAULT_CACHE, get_suite
+
+    suite = get_suite(suite_name)
+
+    def make_bench(cfg: TargetConfig):
+        cache = Path(cfg.extra.get("cache_dir") or DEFAULT_CACHE)
+        limit = cfg.extra.get("limit")
+        tasks = suite.load(cache, limit)
+        return QABenchmark(
+            tasks=tasks, grader=suite.grader, model=cfg.model, k=cfg.k,
+            n_concurrent=cfg.n_concurrent, real=cfg.real, temperature=suite.temperature,
+        )
+
+    return Target(
+        name=f"qa-{suite_name}",
+        make_benchmark=make_bench,
+        part_map=_qa_part_map,
+        seed_harness=lambda s=suite: _qa_seed(s, f"qa-seed-{s.name}-"),
+        cold_start_brief=lambda s=suite: _qa_brief(s),
+        baseline_score=suite.baseline_score,
+        baseline_note=suite.baseline_note,
+    )
+
+
+for _qa in ("gsm8k",):
+    register(f"qa-{_qa}", (lambda n=_qa: _qa_target(n)))
