@@ -81,7 +81,7 @@ class MiniSweBenchmark(Benchmark):
         # Reuse AHE's pinned harbor (it registers the `mini-swe-agent` agent).
         self.harbor_bin = Path(harbor_bin) if harbor_bin else self.ahe_dir / ".venv" / "bin" / "harbor"
         # harness_hash -> {task_id -> failure excerpt}, versioned per harness so
-        # a candidate's gate run is never attributed to the live harness.
+        # a candidate's acceptance run is never attributed to the live harness.
         self._traces: dict[str, dict[str, str]] = {}
         # Structured evidence (localizer + editor), populated alongside _traces.
         self.evidence_store = EvidenceStore()
@@ -345,7 +345,7 @@ class MiniSweBenchmark(Benchmark):
             return "\n".join(chunks)[-1400:]
         return str(data)[-1400:]
 
-    # --- free structural pre-gate ---
+    # --- free structural pre-acceptance ---
 
     def boot_check(self, harness: Harness) -> tuple[bool, str]:
         with tempfile.TemporaryDirectory() as tmp:

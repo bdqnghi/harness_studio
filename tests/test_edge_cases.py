@@ -2,7 +2,7 @@
 
 from studio.benchmark.toy import ToyBenchmark, build_toy_harness
 from studio.benchmark import toy_fixes
-from studio.stages.optimize.gate import Gate
+from studio.stages.optimize.acceptance import AcceptanceCheck
 from studio.stages.split import split_tasks
 from studio.config import PileConfig
 
@@ -12,7 +12,7 @@ def test_gate_empty_judging_set_does_not_crash(tmp_path):
     old = build_toy_harness(tmp_path / "o")
     new = old.copy_to(tmp_path / "n")
     toy_fixes.enable_upper(new.root)
-    d = Gate(bench, [], wobble=0.0).evaluate(old, new)
+    d = AcceptanceCheck(bench, [], noise_floor=0.0).evaluate(old, new)
     assert not d.accept and d.gain == 0.0
 
 

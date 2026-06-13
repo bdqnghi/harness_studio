@@ -38,9 +38,9 @@ class InstrumentedBenchmark(Benchmark):
         self.task_runs = 0  # task-score evaluations actually executed
         self.cache_hits = 0
         # Optional disk persistence: one shared JSONL may back several wrappers
-        # (gate at k=1, calibration/verdict at k=3, different actor models), so
+        # (acceptance at k=1, calibration/verdict at k=3, different actor models), so
         # every record carries a namespace encoding the evaluation config — a
-        # k=1 gate score must never satisfy a k=3 verdict lookup.
+        # k=1 acceptance score must never satisfy a k=3 verdict lookup.
         self.namespace = namespace or self._default_namespace()
         self.disk_path = Path(disk_path) if disk_path else None
         if self.disk_path and self.cache_enabled:

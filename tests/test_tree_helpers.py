@@ -3,7 +3,7 @@
 from studio import schemas
 from studio.backends.mock import MockBackend
 from studio.stages.optimize import ideator, insight, strategist
-from studio.stages.optimize.gate import GateDecision
+from studio.stages.optimize.acceptance import AcceptanceDecision
 from studio.stages.optimize.idea_tree import IdeaTree
 
 
@@ -227,7 +227,7 @@ def test_insight_distill_and_direction_summary(tmp_path):
     d = tree.add_direction("dir", "m", {}, 1)
     node = tree.add_hypothesis(d.id, title="t", mechanism="m", hypothesis="h",
                                observable="o", round_idx=1)
-    decision = GateDecision(True, 0.06, 0.5, 0.56, runs_used=1, reason="clearly better")
+    decision = AcceptanceDecision(True, 0.06, 0.5, 0.56, runs_used=1, reason="clearly better")
     backend = MockBackend(json_responses={
         "insight": [{"insight": "capping output removed the timeout failure mode"}],
         "insight-direction": [{"insight": "output size is the bottleneck"}],

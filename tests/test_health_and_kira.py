@@ -4,7 +4,7 @@ import pytest
 
 from studio.benchmark import kira
 from studio.stages.optimize import health
-from studio.stages.optimize.gate import Gate
+from studio.stages.optimize.acceptance import AcceptanceCheck
 from studio.config import HealthConfig
 from studio.core.state import HealthCounters
 
@@ -15,10 +15,10 @@ def test_no_signals_when_healthy():
     assert health.assess(HealthCounters(), HealthConfig()) == []
 
 
-def test_gate_rejection_streak_signal():
+def test_acceptance_rejection_streak_signal():
     h = HealthCounters(gate_rejections=5)
-    sigs = {s.name for s in health.assess(h, HealthConfig(gate_rejection_limit=5))}
-    assert "gate_rejection_streak" in sigs
+    sigs = {s.name for s in health.assess(h, HealthConfig(acceptance_rejection_limit=5))}
+    assert "acceptance_rejection_streak" in sigs
 
 
 def test_reward_hack_signal_always_fires():
@@ -83,10 +83,10 @@ def test_kira_run_without_real_raises(tmp_path):
         bench.run(Harness(tmp_path), ["t"])
 
 
-# --- trust boundary: the gate must never receive a Backend ---
+# --- trust boundary: the acceptance must never receive a Backend ---
 
 def test_gate_constructor_has_no_backend_param():
-    params = set(inspect.signature(Gate.__init__).parameters)
+    params = set(inspect.signature(AcceptanceCheck.__init__).parameters)
     assert "backend" not in params
-    # and the gate object holds no backend-like attribute
+    # and the acceptance object holds no backend-like attribute
     assert not any("backend" in name for name in params)

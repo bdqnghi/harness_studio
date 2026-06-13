@@ -80,7 +80,7 @@ def test_extract_json_with_code_fence():
     assert _extract_json('```json\n[1, 2, 3]\n```') == [1, 2, 3]
 
 
-# --- final-segment deep audit catches a trap that passed the fast gate ---
+# --- final-segment deep audit catches a trap that passed the fast acceptance ---
 
 class TrapBench(Benchmark):
     """A '# TRAP' edit looks great on judging/final but is secretly worse on the
@@ -120,7 +120,7 @@ GOOD_TOOLS = (
 
 def test_repair_touching_do_not_touch_is_reverted(tmp_path):
     """A structural-repair that also edits a do-not-touch file must have that
-    edit reverted by re-enforcing the shell before the gate (fix B)."""
+    edit reverted by re-enforcing the shell before the acceptance (fix B)."""
     from studio.benchmark.toy import ToyBenchmark
     from studio.benchmark import toy_fixes as fixes
 
@@ -150,7 +150,7 @@ def test_repair_touching_do_not_touch_is_reverted(tmp_path):
         },
         agent_actions={"strategist": [fixes.break_boot], "strategist-repair": [repair]},
     )
-    config = Config(loop=LoopConfig(rounds=1, segment_length=10, wobble_runs=2),
+    config = Config(loop=LoopConfig(rounds=1, segment_length=10, noise_floor_runs=2),
                     edits=EditConfig(allow_repair=True))
     src = build_toy_harness(tmp_path / "src")
     original_config = src.read_file("config.json")
@@ -161,7 +161,7 @@ def test_repair_touching_do_not_touch_is_reverted(tmp_path):
     )
     result = orch.run()
 
-    assert result.accepted == 1                              # repaired edit reached the gate
+    assert result.accepted == 1                              # repaired edit reached the acceptance
     assert "reverse" in orch.harness.read_file("tools.py")   # the real fix landed
     assert orch.harness.read_file("config.json") == original_config  # do-not-touch reverted
 

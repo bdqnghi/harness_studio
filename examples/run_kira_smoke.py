@@ -7,7 +7,7 @@ Steps (all but the last are free / a couple of cheap claude calls):
   3. Run the structural check (compile every .py — dependency-free).
   4. Run one real Strategist -> shell -> structural-check cycle on a tiny edit.
 
-The expensive Terminal-Bench gate is opt-in (--real-benchmark) and not wired
+The expensive Terminal-Bench acceptance is opt-in (--real-benchmark) and not wired
 until M4, so this never spends Docker/model budget unless asked.
 
   python examples/run_kira_smoke.py

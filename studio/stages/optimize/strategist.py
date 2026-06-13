@@ -2,7 +2,7 @@
 
 Each round it produces several *competing whole-strategies*. A strategy is one
 complete, internally-coordinated proposal (it may touch several parts at once) —
-the unit that competes at the gate. We realize each as its own candidate copy of
+the unit that competes at the acceptance. We realize each as its own candidate copy of
 the harness, edited in place by one coding-agent run, so every strategy is a
 coordinated fix by a single mind (PRD §5.3's "one agent, not N per-part fixers").
 

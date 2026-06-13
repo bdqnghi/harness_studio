@@ -4,7 +4,7 @@ These encode the toy's *known optimum*: applying the three good fixes takes the
 harness from the baseline (only ``echo`` works) to a perfect score. They are
 ``MockBackend`` Tier-A actions — each mutates files under a workspace root — so
 tests and ``run_toy.py`` can script an exact proposer sequence and assert the
-gate keeps the good edits and rejects the bad ones.
+acceptance keeps the good edits and rejects the bad ones.
 """
 
 from __future__ import annotations
@@ -54,27 +54,27 @@ def fix_add_full(root: Path) -> None:
     enable_add(root)
 
 
-# --- bad edits (the gate / structural check must reject these) ---
+# --- bad edits (the acceptance / structural check must reject these) ---
 
 def noop(root: Path) -> None:
-    """A harmless edit that changes nothing meaningful (gate: no help)."""
+    """A harmless edit that changes nothing meaningful (acceptance: no help)."""
     path = Path(root) / "config.json"
     path.write_text(path.read_text())  # rewrite identical content
 
 
 def enable_bogus(root: Path) -> None:
     """A real edit that changes a file but does not affect any score: enable an
-    operation that no task uses (gate: no help -> reject, but reaches the gate)."""
+    operation that no task uses (acceptance: no help -> reject, but reaches the acceptance)."""
     path = Path(root) / "instructions.txt"
     path.write_text(path.read_text().rstrip() + "\nENABLE bogus\n")
 
 
 def regress_echo(root: Path) -> None:
-    """Disable the working echo op (gate: regression -> reject)."""
+    """Disable the working echo op (acceptance: regression -> reject)."""
     path = Path(root) / "instructions.txt"
     path.write_text(path.read_text().replace("ENABLE echo\n", ""))
 
 
 def break_boot(root: Path) -> None:
-    """Write invalid Python (structural check must catch before the gate)."""
+    """Write invalid Python (structural check must catch before the acceptance)."""
     (Path(root) / "tools.py").write_text("OPS = {  # truncated, syntax error\n")

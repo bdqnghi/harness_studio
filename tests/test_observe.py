@@ -24,10 +24,10 @@ def test_progress_jsonl_event_stream(tmp_path):
     for r in range(1, ROUNDS + 1):
         rnames = [e["event"] for e in events if e.get("round") == r]
         for expected in ("round_start", "batch_done", "diagnosis_done",
-                         "proposal_done", "gate_decision", "round_end"):
+                         "proposal_done", "acceptance_decision", "round_end"):
             assert expected in rnames, f"round {r} missing {expected}: {rnames}"
     # The tree accepts at least one edit (rounds 2-3).
-    assert any(e["event"] == "gate_decision" and e.get("accept") for e in events)
+    assert any(e["event"] == "acceptance_decision" and e.get("accept") for e in events)
     # The trailing segment is audited and reported.
     assert any(e["event"] == "segment_boundary" for e in events)
     # round_end carries cumulative cost counters.

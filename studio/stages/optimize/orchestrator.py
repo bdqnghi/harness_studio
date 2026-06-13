@@ -3,8 +3,8 @@
 The **inner loop** (per round): find failures -> diagnose -> route failure
 patterns onto the hypothesis tree -> select/ideate one hypothesis -> localize
 (evidence-grounded edit targets) -> implement it -> shell -> structural check ->
-gate -> snapshot. The gate is the only place an AI proposal becomes a harness
-mutation, and it accepts on the NET pooled gain (held_in u regression).
+acceptance -> snapshot. The acceptance check is the only place an AI proposal becomes a
+harness mutation, and it accepts on the NET pooled gain (held_in u regression).
 
 The **outer loop** (per segment of K rounds): the deep auditor re-checks the
 live harness on held_in with fresh rollouts, rewinding a noise-mirage accept and
@@ -12,7 +12,7 @@ falsifying the offending tree nodes; insights propagate so dead ideas are never
 re-bought.
 
 The Orchestrator owns all state and validates that no AI component crosses the
-gate boundary: the gate and deep auditor get a benchmark, never a Backend.
+acceptance boundary: the acceptance check and deep auditor get a benchmark, never a Backend.
 """
 
 from __future__ import annotations
@@ -27,9 +27,9 @@ from studio.benchmark.base import Benchmark
 from studio.benchmark.instrument import InstrumentedBenchmark, RewardHackError
 from studio.stages.optimize import (
     deep_auditor, diagnoser, health, ideator, insight, localizer, mapper,
-    runner, shell, strategist, structural_check, wobble,
+    runner, shell, strategist, structural_check, noise_floor,
 )
-from studio.stages.optimize.gate import Gate
+from studio.stages.optimize.acceptance import AcceptanceCheck
 from studio.stages.optimize.idea_tree import IdeaTree, classify_rejection, mutation_event
 from studio.stages.optimize.snapshotter import Snapshotter
 from studio.stages.split import TaskSplit, sample_held_in, split_tasks
@@ -45,7 +45,7 @@ from studio.core.state import RoundOutcome, WorkspaceState
 class RunResult:
     baseline_final: float
     final_score: float
-    wobble: float
+    noise_floor: float
     rounds: list[RoundOutcome] = field(default_factory=list)
     task_runs: int = 0  # task-score evaluations actually executed (cost)
     cache_hits: int = 0
@@ -85,7 +85,7 @@ class Orchestrator:
             benchmark, cache=config.cache,
             disk_path=Path(config.score_cache) if config.score_cache else None,
         )
-        self.backend = backend  # only the Strategist gets this; never the gate
+        self.backend = backend  # only the Strategist gets this; never the acceptance
         self.state = WorkspaceState(root=Path(workspace))
         # Install the harness under the workspace as the live copy.
         self.harness = source_harness.copy_to(self.state.harness_dir)
@@ -144,23 +144,23 @@ class Orchestrator:
             n_held_out=len(self.split.held_out),
         )
         baseline_final = self._final_score()
-        held_in_wobble = wobble.measure_wobble(
+        held_in_noise_floor = noise_floor.measure_noise_floor(
             self.benchmark, self.harness, self.split.held_in,
-            runs=self.config.loop.wobble_runs,
+            runs=self.config.loop.noise_floor_runs,
         )
-        regression_wobble = (
-            wobble.measure_wobble(
+        regression_noise_floor = (
+            noise_floor.measure_noise_floor(
                 self.benchmark, self.harness, self.split.regression,
-                runs=self.config.loop.wobble_runs,
+                runs=self.config.loop.noise_floor_runs,
             )
             if self.split.regression else 0.0
         )
-        self.state.wobble = max(held_in_wobble, regression_wobble)
+        self.state.noise_floor = max(held_in_noise_floor, regression_noise_floor)
         self.snapshotter.save(self.harness, 0, self._held_in_score())
         # Seed the deep-audit "best so far" with the baseline harness.
         self._best_audit_score = self._audit_score()
         self.harness.copy_to(self._best_dir)
-        self.progress.emit("setup_done", wobble=round(self.state.wobble, 4),
+        self.progress.emit("setup_done", noise_floor=round(self.state.noise_floor, 4),
                            task_runs=self.benchmark.task_runs)
 
         total = self.config.loop.rounds
@@ -195,7 +195,7 @@ class Orchestrator:
         return RunResult(
             baseline_final=baseline_final,
             final_score=self._final_score(),
-            wobble=self.state.wobble,
+            noise_floor=self.state.noise_floor,
             rounds=list(self.state.evidence),
             task_runs=self.benchmark.task_runs,
             cache_hits=self.benchmark.cache_hits,
@@ -269,7 +269,7 @@ class Orchestrator:
     # patterns onto direction nodes -> Thompson-select a direction -> take a
     # pending hypothesis from its frontier (free) or ideate k new ones (one
     # Tier-B call) -> implement ONLY the selected one (one Tier-A call) -> the
-    # SAME gate as the classic arm -> the verdict becomes durable tree state:
+    # SAME acceptance as the classic arm -> the verdict becomes durable tree state:
     # falsified ideas are never re-proposed; noise-killed ideas retry bounded;
     # insights propagate to future ideation.
 
@@ -388,11 +388,11 @@ class Orchestrator:
 
     def _test_tree(self, round_idx: int, direction, node, s: Strategy,
                    diagnosis: list[dict]) -> None:
-        gate = Gate(
-            self.benchmark, self.split.held_in, self.state.wobble,
+        acceptance = AcceptanceCheck(
+            self.benchmark, self.split.held_in, self.state.noise_floor,
             regression_tasks=self.split.regression,
-            borderline_extra_runs=self.config.gate.borderline_extra_runs,
-            strict_dual=self.config.gate.strict_dual,
+            borderline_extra_runs=self.config.acceptance.borderline_extra_runs,
+            strict_dual=self.config.acceptance.strict_dual,
         )
         struct = structural_check.check(
             s.candidate, self.benchmark, backend=self.backend,
@@ -416,8 +416,8 @@ class Orchestrator:
                 self._reject(round_idx, "repair violated shell invariants", empty=False)
                 return
         additive = shell.is_strictly_additive(self.harness, s.candidate)
-        decision = gate.evaluate(self.harness, s.candidate, additive=additive)
-        self.progress.emit("gate_decision", round=round_idx,
+        decision = acceptance.evaluate(self.harness, s.candidate, additive=additive)
+        self.progress.emit("acceptance_decision", round=round_idx,
                            strategy_id=s.strategy_id, additive=additive,
                            **decision_dict(decision))
         evidence = {
@@ -448,7 +448,7 @@ class Orchestrator:
             self.snapshotter.save(self.harness, round_idx, self._held_in_score())
             return
 
-        status = classify_rejection(decision, self.state.wobble)
+        status = classify_rejection(decision, self.state.noise_floor)
         self.tree.set_status(node.id, status, evidence=evidence,
                              tested_round=round_idx)
         lesson = insight.distill(self.backend, node, decision, diagnosis)
@@ -463,7 +463,7 @@ class Orchestrator:
                      empty=False)
 
     def _burn_retry(self, round_idx: int, node, reason: str) -> None:
-        """A hypothesis whose implementation never reached the gate burns one
+        """A hypothesis whose implementation never reached the acceptance burns one
         of its bounded retries (an unimplementable idea must not loop forever)."""
         if node.status == "pending":
             self.tree.set_status(node.id, "rejected_noise", evidence={"reason": reason})
@@ -486,7 +486,7 @@ class Orchestrator:
         family-map trap rule)."""
         verdict = deep_auditor.audit(
             self.benchmark, self.harness, self.split.held_in,
-            best_score=self._best_audit_score, wobble=self.state.wobble,
+            best_score=self._best_audit_score, noise_floor=self.state.noise_floor,
         )
         if verdict.verdict == "worse":
             self.harness = Harness(self._best_dir).copy_to(self.state.harness_dir)

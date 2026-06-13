@@ -1,7 +1,7 @@
-"""Wobble measurement (PRD §5.0b): establish the benchmark's noise floor.
+"""Noise-floor measurement (PRD §5.0b): establish the benchmark's noise floor.
 
 Run the unchanged harness on a fixed set N times and take the spread of the
-aggregate score. The gate uses this scalar to avoid mistaking noise for a real
+aggregate score. The acceptance uses this scalar to avoid mistaking noise for a real
 gain. Re-calibrate occasionally (PRD §5.0b, §7).
 """
 
@@ -11,7 +11,7 @@ from studio.benchmark.base import Benchmark
 from studio.core.harness import Harness
 
 
-def measure_wobble(
+def measure_noise_floor(
     benchmark: Benchmark, harness: Harness, task_ids: list[str], runs: int = 5
 ) -> float:
     """Return the spread (max - min) of the aggregate score across ``runs``."""

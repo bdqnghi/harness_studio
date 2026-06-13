@@ -2,7 +2,7 @@
 
 Arbor's ablations put insight propagation above the tree itself (81.8% with
 both vs 54.5% without insights): future ideas inherit *why* past ones won or
-lost instead of rediscovering it. After each gate decision we distill one
+lost instead of rediscovering it. After each acceptance decision we distill one
 <=200-word lesson onto the tested node; when a direction gains a definitive
 result, a second short call refreshes the direction's summary.
 
@@ -24,7 +24,7 @@ def distill(
     backend: Backend, node: Node, decision, diagnosis: list[dict],
     *, model: str | None = None,
 ) -> str:
-    """The <=200-word lesson from testing one hypothesis at the gate."""
+    """The <=200-word lesson from testing one hypothesis at the acceptance."""
     verdict = "ACCEPTED" if decision.accept else "REJECTED"
     evidence = "; ".join(
         f"{d.get('pattern_id', '?')}: {d.get('root_cause', '')}" for d in diagnosis[:4]
@@ -36,7 +36,7 @@ def distill(
         "the same direction should do differently or build on.\n\n"
         f"Hypothesis: {node.title} — {node.hypothesis}\n"
         f"Predicted observable: {node.observable}\n"
-        f"Gate verdict: {verdict} (judging gain {decision.gain:+.3f}, "
+        f"AcceptanceCheck verdict: {verdict} (judging gain {decision.gain:+.3f}, "
         f"regression gain {decision.regression_gain:+.3f}, "
         f"runs used {decision.runs_used}; {decision.reason})\n"
         f"Failure evidence it targeted: {evidence}\n"

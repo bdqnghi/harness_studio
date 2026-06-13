@@ -11,7 +11,7 @@ Putting both behind one interface lets the whole pipeline run against a scripted
 ``MockBackend`` (deterministic, free, used by every unit/integration test) or the
 the real ``LLMBackend`` (LiteLLM) with no change to the loop.
 
-Trust boundary (PRD §3): a Backend is never handed to the gate. AI helpers only
+Trust boundary (PRD §3): a Backend is never handed to the acceptance. AI helpers only
 ever propose; only code decides.
 """
 

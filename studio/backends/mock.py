@@ -4,7 +4,7 @@ Tier-B calls return scripted JSON; Tier-A calls run scripted *actions* that
 mutate the candidate workspace on disk. Responses/actions are keyed by ``tag``
 (the calling helper) and consumed FIFO, so a test can lay out an exact sequence
 of proposer behaviors — a mix of good edits, no-op edits, regressions, and
-non-booting edits — to exercise every branch of the gate and structural check.
+non-booting edits — to exercise every branch of the acceptance and structural check.
 """
 
 from __future__ import annotations

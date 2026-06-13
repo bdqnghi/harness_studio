@@ -44,7 +44,7 @@ class HealthCounters:
     """Signals the orchestrator watches (PRD §7)."""
 
     empty_rounds: int = 0  # consecutive rounds where everything was dropped
-    gate_rejections: int = 0  # consecutive gate rejections
+    gate_rejections: int = 0  # consecutive acceptance rejections
     reward_hack_incidents: int = 0
 
 
@@ -53,7 +53,7 @@ class WorkspaceState:
     """Filesystem layout + in-memory records for one optimization run."""
 
     root: Path
-    wobble: float = 0.0
+    noise_floor: float = 0.0
     score_history: list[float] = field(default_factory=list)
     evidence: list[RoundOutcome] = field(default_factory=list)
     health: HealthCounters = field(default_factory=HealthCounters)

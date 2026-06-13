@@ -1,4 +1,4 @@
-"""Structural check (PRD §5.7): the free pre-gate.
+"""Structural check (PRD §5.7): the free pre-acceptance.
 
 Apply-and-boot a candidate *before* spending any benchmark task runs: compile
 every Python file, then run the benchmark's cheap boot check. This is also where

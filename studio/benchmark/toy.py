@@ -18,9 +18,9 @@ Failure families and their ground-truth fix:
   * upper   — implemented but not ENABLEd        -> edit instructions (blame: instructions)
   * add     — neither implemented nor ENABLEd    -> add to tools.py + enable (blame: tool_code + instructions)
 
-Wobble (PRD §2): a correct task is flipped to "fail" deterministically based on
-``hash(harness, task, run_idx)``, modelling a flaky benchmark whose noise floor
-the gate must beat. Reproducible — no use of ``random``.
+Noise floor (PRD §2): a correct task is flipped to "fail" deterministically based
+on ``hash(harness, task, run_idx)``, modelling a flaky benchmark whose noise floor
+the acceptance check must beat. Reproducible — no use of ``random``.
 """
 
 from __future__ import annotations
@@ -130,10 +130,10 @@ def _make_arg(family: str, i: int) -> str:
 # --- the toy benchmark --------------------------------------------------------
 
 class ToyBenchmark(Benchmark):
-    """Scores the toy harness; ``per_family`` tasks per family; optional wobble.
+    """Scores the toy harness; ``per_family`` tasks per family; optional noise.
 
     ``noise_per_mille`` is the probability (in units of 1/1000) that a *correct*
-    task is reported as failing on a given run — the injected wobble.
+    task is reported as failing on a given run — the injected noise floor.
     """
 
     def __init__(self, per_family: int = 12, noise_per_mille: int = 0) -> None:

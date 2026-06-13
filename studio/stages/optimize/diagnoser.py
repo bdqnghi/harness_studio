@@ -3,7 +3,7 @@
 A Tier-B call: the round's failing tasks in, clustered failure patterns out, each
 naming a root cause and blaming an editable part (or "unclear"). Routing rides on
 this same call — no separate router. The blame is a hint, not a decision; the
-gate still has the final say, so a wrong blame just wastes one strategy.
+acceptance still has the final say, so a wrong blame just wastes one strategy.
 """
 
 from __future__ import annotations

@@ -64,7 +64,7 @@ def test_disk_cache_survives_restart(tmp_path):
 
 
 def test_disk_cache_namespaced_by_config(tmp_path):
-    """A k=1 gate score must not satisfy a k=3 lookup over the same file."""
+    """A k=1 acceptance score must not satisfy a k=3 lookup over the same file."""
     h = build_toy_harness(tmp_path / "h")
     cache_file = tmp_path / "scores.jsonl"
 

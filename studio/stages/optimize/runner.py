@@ -2,7 +2,7 @@
 
 Runs the current harness once over the round's held-in batch and reports which
 failed. These scores *locate failures only* — they make no keep/reject decision
-(that is the gate's job, with precision reserved for it).
+(that is the acceptance's job, with precision reserved for it).
 """
 
 from __future__ import annotations

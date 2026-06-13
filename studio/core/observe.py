@@ -33,6 +33,6 @@ class ProgressLog:
 
 
 def decision_dict(decision) -> dict:
-    """A GateDecision as a JSON-safe dict with floats rounded for readability."""
+    """A AcceptanceDecision as a JSON-safe dict with floats rounded for readability."""
     out = dataclasses.asdict(decision)
     return {k: round(v, 4) if isinstance(v, float) else v for k, v in out.items()}

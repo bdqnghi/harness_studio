@@ -5,7 +5,7 @@
 ## Why
 
 SHO hill-climbs a harness on a benchmark: run failing tasks → diagnose → propose a
-hypothesis → implement an edit → a noise-aware gate accepts/rejects. Investigating
+hypothesis → implement an edit → a noise-aware acceptance check accepts/rejects. Investigating
 **why edits weren't generalizing** exposed a broken context-localization path — the
 single most likely cause:
 
@@ -35,7 +35,7 @@ paths (classic + tree). Off by default in config; drivers default it on.
 benchmark.run → adapter builds TaskEvidence{signals, causal windows, transcript}
               → EvidenceStore (versioned per harness hash)
 round:  diagnose → materialize evidence → localizer.localize → validate citations
-        → editor receives localized targets + evidence windows → gate
+        → editor receives localized targets + evidence windows → acceptance check
 ```
 
 ### New modules
@@ -77,7 +77,7 @@ round:  diagnose → materialize evidence → localizer.localize → validate ci
   tests proving the editor receives the localized block on **both** paths
   (`test_tree_loop.py`), plus the degrade-to-identical invariant when localization is off.
 - **Live end-to-end on tau2-airline** (cold-start, `--localizer auto`): clean
-  `wobble → practice (3 real failures) → diagnose → localize → propose → gate → verdict`
+  `noise floor → practice (3 real failures) → diagnose → localize → propose → acceptance check → verdict`
   with **`localization_done n_targets=2` in agentic mode** — the `run_explore` loop read
   the real evidence + harness and produced 2 targets that passed the citation guard. (The
   k=1 / 1-round config is a pipeline check, not a signal run: verdict 0.500→0.500,

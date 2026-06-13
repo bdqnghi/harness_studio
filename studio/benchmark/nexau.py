@@ -22,7 +22,7 @@ Design notes
   subprocess env — we load those from AHE's ``.env`` (never logged).
 * ``run_idx`` is threaded into a fresh ``--jobs-dir`` per call, so each repeated
   run is a genuinely independent rollout. Combined with the InstrumentedBenchmark
-  cache key ``(hash, run_idx, task)`` this gives the gate *real* TB2 wobble
+  cache key ``(hash, run_idx, task)`` this gives the acceptance *real* TB2 noise_floor
   instead of a cached constant.
 * Task selection uses the locally-cached task directories
   (``~/.cache/harbor/tasks/<hash>/<task-name>/``). ``list_tasks`` enumerates a
@@ -193,7 +193,7 @@ class NexauBenchmark(Benchmark):
         # Faithful to evolve.py: use AHE's pinned harbor (it registers `nexau`).
         self.harbor_bin = Path(harbor_bin) if harbor_bin else self.ahe_dir / ".venv" / "bin" / "harbor"
         # harness_hash -> {task_id -> failure excerpt} from that harness's most
-        # recent run. Versioning by harness keeps a candidate's gate run from
+        # recent run. Versioning by harness keeps a candidate's acceptance run from
         # being attributed to the live harness (the diagnoser reads these).
         # Stored in-memory so the on-disk jobs dir can be deleted right after
         # each eval; only the most recent few harness versions are retained.
@@ -427,7 +427,7 @@ class NexauBenchmark(Benchmark):
         out = data.get("output") if isinstance(data, dict) else None
         return str(out)[-1400:] if out else ""
 
-    # --- free structural pre-gate ---
+    # --- free structural pre-acceptance ---
 
     def boot_check(self, harness: Harness) -> tuple[bool, str]:
         with tempfile.TemporaryDirectory() as tmp:

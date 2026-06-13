@@ -4,7 +4,7 @@ A self-evolving **harness optimizer**. It automatically improves an AI agent's
 *harness* — the scaffolding around a frozen model: instructions, tool
 descriptions, tool code, middleware, skills, sub-agent config, and memory — by
 repeatedly proposing coordinated edits, testing them against a real benchmark
-with a **noise-aware gate**, and keeping only what genuinely helps. A slower
+with a **noise-aware acceptance check**, and keeping only what genuinely helps. A slower
 **meta-loop** then revises *how* edits are proposed, so the search keeps escaping
 plateaus.
 
@@ -20,25 +20,31 @@ Three pluggable **seams** keep the loop testable for free:
 | Seam | Real implementation | Test implementation |
 |---|---|---|
 | `Backend` — how AI helpers run | `ClaudeCLIBackend` (subprocess `claude -p`) | `MockBackend` (scripted, deterministic) |
-| `Benchmark` — how a harness is scored | `KiraBenchmark` (Terminus-KIRA) | `ToyBenchmark` (known optimum + injected wobble) |
+| `Benchmark` — how a harness is scored | `KiraBenchmark` (Terminus-KIRA) | `ToyBenchmark` (known optimum + injected noise floor) |
 | `Harness` — the thing optimized | a real codebase of files | the toy harness |
 
 The **trust boundary** is a code guarantee: AI helpers only ever *propose*; only
-the `Gate` writes scores and mutates the harness, and the gate never receives a
+the `AcceptanceCheck` writes scores and mutates the harness, and the acceptance check never receives a
 `Backend`. No AI component can reach the evaluator.
 
 ## Layout
 
 ```
 studio/
-  orchestrator.py     the deterministic spine (inner + outer loops)
-  harness.py parts.py state.py config.py schemas.py
-  backends/   base.py mock.py claude_cli.py
-  benchmark/  base.py toy.py toy_fixes.py  (kira.py later)
-  components/ runner gate snapshotter splitter wobble strategist ...
-  skills/     strategist/SKILL.md  meta_agent/SKILL.md
-examples/   run_toy.py  (run_kira_smoke.py later)
-tests/      unit per component + test_toy_loop.py (integration)
+  pipeline.py         the spine: resolve → profile → split → optimize → verdict
+  config.py schemas.py
+  targets.py targets_builtin.py   step 1 "resolve" = Target.resolve_seed (+ registry)
+  core/       harness.py parts.py state.py observe.py evidence.py   (shared vocabulary)
+  backends/   base.py mock.py llm.py llm_loop.py factory.py
+  benchmark/  base.py toy.py tau2.py qa.py qa_suites.py instrument.py ...
+  stages/     the 5 steps
+    profile.py  split.py  verdict.py
+    optimize/   orchestrator.py + the per-round loop:
+                runner diagnoser idea_tree ideator insight localizer
+                strategist acceptance noise_floor snapshotter mapper ...
+  skills/     strategist/SKILL.md
+examples/   hillclimb.py   (target-agnostic driver; --profile-only / --dry-run)
+tests/      unit per module + test_tree_loop.py (integration)
 ```
 
 ## Quick start
@@ -59,8 +65,8 @@ python examples/run_toy.py --backend claude --rounds 3
 
 ## Status — all milestones complete ✅
 
-- **M0** — skeleton + seams + toy + noise-aware gate (PRD Phase 0)
-- **M1** — typing: Mapper, 7 parts, per-part budgets, structural pre-gate (validated on real Terminus-KIRA)
+- **M0** — skeleton + seams + toy + noise-aware acceptance check (PRD Phase 0)
+- **M1** — typing: Mapper, 7 parts, per-part budgets, structural pre-acceptance check (validated on real Terminus-KIRA)
 - **M2** — strategy unit: Diagnoser, competing Strategists, Reviewer, Ranker (top-1 fall-through)
 - **M3** — two-speed meta-loop: family map, Meta-agent, deep audit, segments
 - **M4** — real KIRA/harbor adapter, health monitor, reward-hack defense, caching, cost instrumentation

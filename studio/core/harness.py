@@ -4,7 +4,7 @@ This is the object being optimized (PRD §2). It is deliberately thin — a harn
 *is* a directory of text files — so the same type works for the toy target and
 for a real one (Terminus-KIRA). All mutation happens by editing files on disk;
 the Strategist (a coding agent) or the MockBackend writes those edits, and the
-gate is the only thing that promotes a candidate to be the live harness.
+acceptance is the only thing that promotes a candidate to be the live harness.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ class Harness:
 
     def content_hash(self) -> str:
         """Stable hash over all file contents — used for caching and as the
-        deterministic seed for the toy benchmark's injected wobble."""
+        deterministic seed for the toy benchmark's injected noise_floor."""
         h = hashlib.sha256()
         for rel in self.files():
             h.update(rel.encode())

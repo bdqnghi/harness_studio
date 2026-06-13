@@ -1,4 +1,4 @@
-"""Gate acceptance: NET pooled (default) + strict-dual escape hatch.
+"""Acceptance check: NET pooled (default) + strict-dual escape hatch.
 
 held_in (judging) ∪ regression are pooled into ONE net decision. A real overall
 lift is kept even when one slice dips a little within noise (measurement variance
@@ -9,7 +9,7 @@ that outweighs the gain is still rejected. ``strict_dual`` restores per-slice ve
 from studio.benchmark import toy_fixes
 from studio.benchmark.base import Benchmark
 from studio.benchmark.toy import ToyBenchmark, build_toy_harness
-from studio.stages.optimize.gate import Gate
+from studio.stages.optimize.acceptance import AcceptanceCheck
 from studio.core.harness import Harness
 
 JUDGE, REG = ["j1", "j2"], ["r1", "r2"]
@@ -35,8 +35,8 @@ def test_net_accepts_big_gain_small_regression(tmp_path):
     b, old, new = _pair(tmp_path,
                         {"j1": 0.0, "j2": 0.0, "r1": 1.0, "r2": 1.0},
                         {"j1": 1.0, "j2": 1.0, "r1": 0.9, "r2": 0.9})
-    d = Gate(b, JUDGE, 0.2, regression_tasks=REG, borderline_extra_runs=0).evaluate(old, new)
-    # pooled gain = (3.8 - 2.0)/4 = +0.45 > wobble 0.2
+    d = AcceptanceCheck(b, JUDGE, 0.2, regression_tasks=REG, borderline_extra_runs=0).evaluate(old, new)
+    # pooled gain = (3.8 - 2.0)/4 = +0.45 > noise_floor 0.2
     assert d.accept and d.gain > 0.2
     assert d.regression_gain < 0          # regression genuinely dipped — and we still accepted
 
@@ -46,7 +46,7 @@ def test_net_rejects_when_regression_outweighs_gain(tmp_path):
     b, old, new = _pair(tmp_path,
                         {"j1": 0.0, "j2": 0.0, "r1": 1.0, "r2": 1.0},
                         {"j1": 0.1, "j2": 0.1, "r1": 0.0, "r2": 0.0})
-    d = Gate(b, JUDGE, 0.2, regression_tasks=REG, borderline_extra_runs=0).evaluate(old, new)
+    d = AcceptanceCheck(b, JUDGE, 0.2, regression_tasks=REG, borderline_extra_runs=0).evaluate(old, new)
     # pooled gain = (0.2 - 2.0)/4 = -0.45 -> reject
     assert not d.accept and d.regressed
 
@@ -55,7 +55,7 @@ def test_net_improves_one_harms_none_accepts(tmp_path):
     bench = ToyBenchmark(per_family=4, noise_per_mille=0)
     old = build_toy_harness(tmp_path / "old")
     new = build_toy_harness(tmp_path / "new"); toy_fixes.enable_upper(new.root)
-    g = Gate(bench, ["upper-0", "upper-1"], 0.0, regression_tasks=["echo-0", "echo-1"])
+    g = AcceptanceCheck(bench, ["upper-0", "upper-1"], 0.0, regression_tasks=["echo-0", "echo-1"])
     assert g.evaluate(old, new).accept
 
 
@@ -63,7 +63,7 @@ def test_additive_neutral_on_both_accepted(tmp_path):
     bench = ToyBenchmark(per_family=4, noise_per_mille=0)
     old = build_toy_harness(tmp_path / "old")
     new = build_toy_harness(tmp_path / "new")  # neutral on both
-    g = Gate(bench, ["upper-0", "upper-1"], 0.0, regression_tasks=["echo-0", "echo-1"])
+    g = AcceptanceCheck(bench, ["upper-0", "upper-1"], 0.0, regression_tasks=["echo-0", "echo-1"])
     assert g.evaluate(old, new, additive=True).accept
 
 
@@ -72,7 +72,7 @@ def test_single_split_mode_unchanged(tmp_path):
     bench = ToyBenchmark(per_family=4, noise_per_mille=0)
     old = build_toy_harness(tmp_path / "old")
     new = build_toy_harness(tmp_path / "new"); toy_fixes.enable_upper(new.root)
-    assert Gate(bench, ["upper-0", "upper-1"], 0.0).evaluate(old, new).accept
+    assert AcceptanceCheck(bench, ["upper-0", "upper-1"], 0.0).evaluate(old, new).accept
 
 
 def test_strict_dual_vetoes_any_regression(tmp_path):
@@ -81,6 +81,6 @@ def test_strict_dual_vetoes_any_regression(tmp_path):
     b, old, new = _pair(tmp_path,
                         {"j1": 0.0, "j2": 0.0, "r1": 1.0, "r2": 1.0},
                         {"j1": 1.0, "j2": 1.0, "r1": 0.9, "r2": 0.9})
-    d = Gate(b, JUDGE, 0.2, regression_tasks=REG, borderline_extra_runs=0,
+    d = AcceptanceCheck(b, JUDGE, 0.2, regression_tasks=REG, borderline_extra_runs=0,
              strict_dual=True).evaluate(old, new)
     assert not d.accept

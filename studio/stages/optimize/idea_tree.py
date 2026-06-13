@@ -8,7 +8,7 @@ LLM coordinator navigates it. Depth is fixed at two:
   * **hypothesis** nodes are concrete, implementable edit ideas under a
     direction.
 
-What it buys, in rollouts: a gate rejection becomes a durable lesson instead
+What it buys, in rollouts: a acceptance rejection becomes a durable lesson instead
 of a counter. Falsified hypotheses are injected into future ideation as hard
 "do not re-propose" constraints; ideas the *noise* killed stay re-proposable
 (``rejected_noise``, retried at most twice) — Arbor never needed that
@@ -239,8 +239,8 @@ class IdeaTree:
         return "\n".join(lines)
 
 
-def classify_rejection(decision, wobble: float) -> str:
-    """Was a gate rejection a *falsification* (clear regression beyond noise)
+def classify_rejection(decision, noise_floor: float) -> str:
+    """Was a acceptance rejection a *falsification* (clear regression beyond noise)
     or just an unresolved result inside the noise band?
 
     ``decision.regressed`` alone is not enough: the borderline-resolution path
@@ -250,7 +250,7 @@ def classify_rejection(decision, wobble: float) -> str:
     re-proposable — hard-constraining them would let noise permanently kill
     good ideas.
     """
-    threshold = max(0.0, wobble) / math.sqrt(max(1, decision.runs_used))
+    threshold = max(0.0, noise_floor) / math.sqrt(max(1, decision.runs_used))
     worst = min(decision.gain, decision.regression_gain)
     if decision.regressed and worst < -threshold:
         return "falsified"

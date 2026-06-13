@@ -1,6 +1,6 @@
 """The benchmark seam — how a harness gets scored.
 
-The gate (PRD §5.8) decides keep/reject purely from numbers this interface
+The acceptance (PRD §5.8) decides keep/reject purely from numbers this interface
 returns, so the benchmark is the trust anchor: deterministic code, no AI. Real
 targets (Terminus-KIRA on Terminal-Bench) and the toy target both implement it,
 so the loop never knows which it is running against.
@@ -28,7 +28,7 @@ class Benchmark(abc.ABC):
 
         ``run_idx`` distinguishes repeated runs of the same harness/tasks; a
         flaky benchmark may return different scores per run_idx (this is the
-        noise the gate must see through)."""
+        noise the acceptance must see through)."""
 
     def boot_check(self, harness: Harness) -> tuple[bool, str]:
         """Cheap structural check: does the harness compile/load/boot?
@@ -49,7 +49,7 @@ class Benchmark(abc.ABC):
         it blames a real cause, not just the task name. Default: none.
 
         ``harness`` scopes the lookup: traces are versioned per harness so a
-        candidate's gate run can never be attributed to the live harness.
+        candidate's acceptance run can never be attributed to the live harness.
 
         Real targets override this; it must degrade gracefully (return "") when no
         trace is available, so the loop never depends on it."""

@@ -280,7 +280,7 @@ def _safe(name: str) -> str:
 
 class EvidenceStore:
     """Per-harness evidence, versioned by harness content hash (so a candidate's
-    gate-run evidence is never attributed to the live harness). LRU over the
+    acceptance-run evidence is never attributed to the live harness). LRU over the
     most recent ``_MAX_HASHES`` harnesses — mirrors ``tau2._store_traces``."""
 
     _MAX_HASHES = 8

@@ -9,7 +9,7 @@ import random
 
 import pytest
 
-from studio.stages.optimize.gate import GateDecision
+from studio.stages.optimize.acceptance import AcceptanceDecision
 from studio.stages.optimize.idea_tree import (
     MAX_NOISE_RETRIES, IdeaTree, classify_rejection, mutation_event,
 )
@@ -159,24 +159,24 @@ def test_select_direction_empty_tree(tmp_path):
 
 
 def test_classify_rejection_all_gate_shapes():
-    wobble = 0.10
-    clear = GateDecision(False, -0.20, 0.5, 0.3, regressed=True, runs_used=1)
-    assert classify_rejection(clear, wobble) == "falsified"
+    noise_floor = 0.10
+    clear = AcceptanceDecision(False, -0.20, 0.5, 0.3, regressed=True, runs_used=1)
+    assert classify_rejection(clear, noise_floor) == "falsified"
     # Borderline-resolved tiny negative: regressed=True but inside residual noise.
-    borderline = GateDecision(False, -0.01, 0.5, 0.49, regressed=True,
+    borderline = AcceptanceDecision(False, -0.01, 0.5, 0.49, regressed=True,
                               borderline=True, runs_used=6)
-    assert classify_rejection(borderline, wobble) == "rejected_noise"
+    assert classify_rejection(borderline, noise_floor) == "rejected_noise"
     # Borderline-resolved but clearly negative even after averaging.
-    resolved_bad = GateDecision(False, -0.30, 0.5, 0.2, regressed=True,
+    resolved_bad = AcceptanceDecision(False, -0.30, 0.5, 0.2, regressed=True,
                                 borderline=True, runs_used=6)
-    assert classify_rejection(resolved_bad, wobble) == "falsified"
+    assert classify_rejection(resolved_bad, noise_floor) == "falsified"
     # Dual-split: judging fine, regression split clearly regressed.
-    dual = GateDecision(False, 0.02, 0.5, 0.52, regressed=True, runs_used=1,
+    dual = AcceptanceDecision(False, 0.02, 0.5, 0.52, regressed=True, runs_used=1,
                         regression_gain=-0.25)
-    assert classify_rejection(dual, wobble) == "falsified"
+    assert classify_rejection(dual, noise_floor) == "falsified"
     # Not regressed at all (neutral behavioral edit) -> noise.
-    neutral = GateDecision(False, 0.0, 0.5, 0.5, regressed=False, runs_used=1)
-    assert classify_rejection(neutral, wobble) == "rejected_noise"
+    neutral = AcceptanceDecision(False, 0.0, 0.5, 0.5, regressed=False, runs_used=1)
+    assert classify_rejection(neutral, noise_floor) == "rejected_noise"
 
 
 def test_markdown_render(tmp_path):

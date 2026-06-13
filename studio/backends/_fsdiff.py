@@ -1,6 +1,6 @@
 """Shared: snapshot a workspace and diff to find changed files.
 
-``files_changed`` is the one contract the Shell and Gate trust to enforce the
+``files_changed`` is the one contract the Shell and AcceptanceCheck trust to enforce the
 per-part edit budget and do-not-touch protection, so every Tier-A backend must
 compute it byte-identically. Keeping the implementation here guarantees that.
 """

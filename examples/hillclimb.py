@@ -3,7 +3,7 @@
 
 Resolves a registered ``Target``, then runs the pipeline:
 resolve harness (warm shipped / cold-generated) → profile the input harness over
-the benchmark → difficulty-stratified split → optimize (tree + net gate +
+the benchmark → difficulty-stratified split → optimize (tree + net acceptance +
 localizer) → grade on the locked held_out.
 
   # preview (no spend)
@@ -49,7 +49,7 @@ def main() -> None:
     # optimizer
     ap.add_argument("--localizer", choices=("off", "inline", "agentic", "auto"),
                     default="auto", help="evidence-grounded context localization (off=diagnosis-only)")
-    ap.add_argument("--strict-gate", action="store_true",
+    ap.add_argument("--strict-acceptance", action="store_true",
                     help="require EACH slice (held_in AND regression) to not-regress; "
                          "default is net pooled gain")
     ap.add_argument("--dry-run", action="store_true")
@@ -58,7 +58,7 @@ def main() -> None:
     ap.add_argument("--segment-length", type=int, default=2)
     ap.add_argument("--hypotheses", type=int, default=4)
     ap.add_argument("--round-size", type=int, default=16)
-    ap.add_argument("--wobble-runs", type=int, default=3)
+    ap.add_argument("--noise-floor-runs", type=int, default=3)
     ap.add_argument("--borderline-runs", type=int, default=1)
     ap.add_argument("--budget", type=int, default=3)
     ap.add_argument("--opt-k", type=int, default=1)
@@ -67,7 +67,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--sigma2", type=float, default=0.2, help="noise prior for the detectable-delta report")
     ap.add_argument("--held-in", type=int, default=16,
-                    help="held-in scoop the gate scores on each round (keep small/cheap)")
+                    help="held-in scoop the acceptance scores on each round (keep small/cheap)")
     ap.add_argument("--reg", type=int, default=10, help="regression (do-no-harm) set size")
     ap.add_argument("--held-out", type=int, default=24,
                     help="locked test cap (0=all surplus); each is graded at test_k twice")

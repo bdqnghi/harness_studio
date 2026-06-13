@@ -1,7 +1,7 @@
 """Generalized benchmark wiring — make ANY benchmark hill-climbable.
 
 A ``Target`` bundles everything benchmark-specific behind one interface so the
-optimizer (orchestrator, gate, tree, splitter) stays fully benchmark-agnostic.
+optimizer (orchestrator, acceptance, tree, splitter) stays fully benchmark-agnostic.
 Wiring a new benchmark = register one ``Target`` + a thin ``Benchmark`` adapter
 whose only real job is ``run(harness, task_ids) -> {task_id: score in [0,1]}``.
 

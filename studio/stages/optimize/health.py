@@ -30,16 +30,16 @@ def assess(health: HealthCounters, cfg: HealthConfig) -> list[HealthSignal]:
             f"{health.empty_rounds} consecutive empty rounds",
             "feed the Strategist more context; re-map or stop if it persists",
         ))
-    if health.gate_rejections >= cfg.gate_rejection_limit:
+    if health.gate_rejections >= cfg.acceptance_rejection_limit:
         signals.append(HealthSignal(
-            "gate_rejection_streak",
-            f"{health.gate_rejections} consecutive gate rejections",
+            "acceptance_rejection_streak",
+            f"{health.gate_rejections} consecutive acceptance rejections",
             "trigger an early meta-agent intervention (pivot directive)",
         ))
     if health.reward_hack_incidents > 0:
         signals.append(HealthSignal(
             "reward_hack",
             f"{health.reward_hack_incidents} reward-hacking incident(s)",
-            "halt — the gate isolation should prevent this; flag and stop",
+            "halt — the acceptance isolation should prevent this; flag and stop",
         ))
     return signals

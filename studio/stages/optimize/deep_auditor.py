@@ -1,4 +1,4 @@
-"""Deep auditor (PRD §5.11): catch what the fast gate cannot.
+"""Deep auditor (PRD §5.11): catch what the fast acceptance cannot.
 
 At a segment boundary, score the current harness on the big audit set (large,
 mostly-untouched, one run each — stability from breadth, not repeats). A harness
@@ -27,12 +27,12 @@ def audit(
     audit_tasks: list[str],
     *,
     best_score: float | None,
-    wobble: float,
+    noise_floor: float,
 ) -> AuditVerdict:
     scores = benchmark.run(harness, audit_tasks, run_idx=0)
     score = sum(scores.values()) / len(scores) if scores else 0.0
-    if best_score is None or score > best_score + wobble:
+    if best_score is None or score > best_score + noise_floor:
         return AuditVerdict(score, "better")
-    if score < best_score - wobble:
+    if score < best_score - noise_floor:
         return AuditVerdict(score, "worse")
     return AuditVerdict(score, "same")

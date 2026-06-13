@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .backends.factory import make_backend
 from .benchmark.instrument import InstrumentedBenchmark
-from .config import Config, EditConfig, GateConfig, LoopConfig, PileConfig
+from .config import Config, EditConfig, AcceptanceConfig, LoopConfig, PileConfig
 from .stages.profile import Profile, profile_harness
 from .stages.split import TaskSplit, _ordering, random_split, stratified_split
 from .stages.verdict import verdict
@@ -56,9 +56,9 @@ def _config(args, ws: Path, split: TaskSplit) -> Config:
         piles=PileConfig(round_size=min(args.round_size, max(1, len(split.held_in))),
                          regression=0, held_out=0),
         loop=LoopConfig(rounds=args.rounds, segment_length=args.segment_length,
-                        wobble_runs=args.wobble_runs,
+                        noise_floor_runs=args.noise_floor_runs,
                         hypotheses_per_direction=args.hypotheses, localizer=args.localizer),
-        gate=GateConfig(borderline_extra_runs=args.borderline_runs, strict_dual=args.strict_gate),
+        acceptance=AcceptanceConfig(borderline_extra_runs=args.borderline_runs, strict_dual=args.strict_acceptance),
         edits=EditConfig(budget_per_part=args.budget),
     )
 

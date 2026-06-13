@@ -1,4 +1,4 @@
-"""Integration: the tree optimizer climbs the toy via the same gate as classic.
+"""Integration: the tree optimizer climbs the toy via the same acceptance as classic.
 
 Round 1 ideates two hypotheses and tests a known-bad one (falsified). Round 2
 proves frontier reuse: the pending sibling is consumed with NO second ideation
@@ -125,7 +125,7 @@ def _tree_backend():
 
 
 def _config(**loop_kw):
-    defaults = dict(rounds=3, wobble_runs=3, 
+    defaults = dict(rounds=3, noise_floor_runs=3, 
                     hypotheses_per_direction=2)
     defaults.update(loop_kw)
     return Config(loop=LoopConfig(**defaults), edits=EditConfig(allow_repair=False))

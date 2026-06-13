@@ -46,7 +46,7 @@ def is_strictly_additive(original: Harness, candidate: Harness) -> bool:
     """True only when the candidate exclusively adds new files.
 
     Modifying or deleting an existing file can change behavior that current tasks
-    already rely on, so those edits must use the stricter behavioral gate.
+    already rely on, so those edits must use the stricter behavioral acceptance.
     """
     orig = set(original.files())
     cand = set(candidate.files())

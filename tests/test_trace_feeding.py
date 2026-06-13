@@ -55,7 +55,7 @@ def test_nexau_last_trace_absent_is_graceful(tmp_path):
 
 
 def test_traces_are_versioned_by_harness(tmp_path):
-    """A candidate's gate run must never overwrite the live harness's traces —
+    """A candidate's acceptance run must never overwrite the live harness's traces —
     the exact bug where the diagnoser read a rejected candidate's trajectory."""
     bench = NexauBenchmark(real=False)
     live = _make_harness(tmp_path / "live", "name: live\n")

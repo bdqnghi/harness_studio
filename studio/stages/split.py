@@ -5,13 +5,13 @@ every round does NOT grow with the benchmark size. So a benchmark is split into
 three sets only:
 
   * **held_in**    — the pool you optimize on. Each round samples ``round_size``
-    tasks from it to find failures; the gate scores old-vs-new on it.
+    tasks from it to find failures; the acceptance scores old-vs-new on it.
   * **regression** — a disjoint do-no-harm set, pooled with held_in into the
-    gate's NET decision (an edit must not make the whole pool worse).
+    acceptance's NET decision (an edit must not make the whole pool worse).
   * **held_out**   — locked the whole time, graded once at the end. The only
     honest number.
 
-There is deliberately **no separate "judging"/"audit" set**: the gate just scores
+There is deliberately **no separate "judging"/"audit" set**: the acceptance just scores
 on held_in, and the noise that a held-aside audit slice would (weakly) guard
 against is handled the right way — by *re-measurement* (repeated rollouts on
 borderline calls; a segment-boundary re-roll of the live harness) — since the
@@ -30,8 +30,8 @@ from studio.config import PileConfig
 
 @dataclass
 class TaskSplit:
-    held_in: list[str]  # the pool: sampled each round; the gate scores old-vs-new here
-    regression: list[str] = field(default_factory=list)  # disjoint do-no-harm, pooled into the gate
+    held_in: list[str]  # the pool: sampled each round; the acceptance scores old-vs-new here
+    regression: list[str] = field(default_factory=list)  # disjoint do-no-harm, pooled into the acceptance
     held_out: list[str] = field(default_factory=list)  # locked until the very end (the one honest number)
 
 
@@ -65,7 +65,7 @@ def sample_held_in(split: TaskSplit, size: int, seed: int, round_idx: int) -> li
 def detectable_delta(n: int, sigma2: float, *, z: float = 1.96, k: int = 3) -> float:
     """Smallest paired effect reliably resolvable with ``n`` tasks at ``k`` rollouts
     and confidence ``z``: sqrt(z^2 * 2*sigma2 / (k * n)). Used to report the
-    detectable floor for the per-round gate and the locked-test verdict."""
+    detectable floor for the per-round acceptance and the locked-test verdict."""
     return math.sqrt((z * z * 2.0 * sigma2) / (max(1, k) * max(1, n)))
 
 
