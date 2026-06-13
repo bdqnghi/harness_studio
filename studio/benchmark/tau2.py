@@ -211,12 +211,22 @@ class Tau2Benchmark(Benchmark):
     def list_tasks(self) -> list[str]:
         if self.tasks:
             return list(self.tasks)
-        tasks_json = self._orig_domain_dir() / "tasks.json"
-        if not tasks_json.is_file():
-            return []
-        data = json.loads(tasks_json.read_text())
-        items = data if isinstance(data, list) else data.get("tasks", [])
-        return [str(t.get("id")) for t in items if isinstance(t, dict) and t.get("id")]
+        # Use tau2's registry so the ids match exactly what the runner accepts.
+        # The CLI's default task split is "base"; some domains (telecom) ship a
+        # huge full set under tasks.json whose ids the "base" split rejects, so
+        # reading tasks.json directly is wrong there. Registry is the source of
+        # truth; fall back to tasks.json only if the registry is unavailable.
+        try:
+            from tau2.registry import registry  # noqa: PLC0415
+            tasks = registry.get_tasks_loader(self.domain)(task_split_name="base")
+            return [str(t.id) for t in tasks if getattr(t, "id", None)]
+        except Exception:  # noqa: BLE001 — registry import/load issues -> fallback
+            tasks_json = self._orig_domain_dir() / "tasks.json"
+            if not tasks_json.is_file():
+                return []
+            data = json.loads(tasks_json.read_text())
+            items = data if isinstance(data, list) else data.get("tasks", [])
+            return [str(t.get("id")) for t in items if isinstance(t, dict) and t.get("id")]
 
     # --- per-candidate data dir (symlink farm + mutated policy) ---
 

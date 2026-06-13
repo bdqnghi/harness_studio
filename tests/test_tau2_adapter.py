@@ -30,9 +30,27 @@ def _fake_repo(tmp_path):
     return root
 
 
-def test_list_tasks_reads_domain_tasks(tmp_path):
+def test_list_tasks_uses_registry_base_split():
+    # The registry is the source of truth: it returns exactly the ids the tau2
+    # runner accepts for the CLI's default "base" split (telecom's full tasks.json
+    # ids would be rejected). airline/retail base = 50/114; telecom base = 114.
+    assert len(Tau2Benchmark(domain="airline").list_tasks()) == 50
+    assert len(Tau2Benchmark(domain="retail").list_tasks()) == 114
+    tele = Tau2Benchmark(domain="telecom").list_tasks()
+    assert len(tele) == 114  # NOT the 2285 of the full set
+    assert all("PERSONA" in t for t in tele)  # telecom's structured ids
+
+
+def test_list_tasks_falls_back_to_tasks_json(tmp_path, monkeypatch):
+    # When the registry can't serve the domain, fall back to the repo's tasks.json.
     repo = _fake_repo(tmp_path)
     b = Tau2Benchmark(domain="airline", tau2_repo=repo)
+    from tau2.registry import registry as singleton
+
+    def _boom(name):
+        raise KeyError(name)
+
+    monkeypatch.setattr(singleton, "get_tasks_loader", _boom)
     assert b.list_tasks() == ["t1", "t2", "t3"]
 
 
