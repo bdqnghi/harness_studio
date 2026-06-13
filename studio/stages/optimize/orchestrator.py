@@ -22,23 +22,23 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .backends.base import Backend
-from .benchmark.base import Benchmark
-from .benchmark.instrument import InstrumentedBenchmark, RewardHackError
-from .components import (
+from studio.backends.base import Backend
+from studio.benchmark.base import Benchmark
+from studio.benchmark.instrument import InstrumentedBenchmark, RewardHackError
+from studio.stages.optimize import (
     deep_auditor, diagnoser, health, ideator, insight, localizer, mapper,
     runner, shell, strategist, structural_check, wobble,
 )
-from .components.gate import Gate
-from .components.idea_tree import IdeaTree, classify_rejection, mutation_event
-from .components.snapshotter import Snapshotter
-from .components.splitter import TaskSplit, sample_held_in, split_tasks
-from .components.strategist import Strategy
-from .config import Config
-from .harness import Harness
-from .observe import ProgressLog, decision_dict
-from .parts import PartMap
-from .state import RoundOutcome, WorkspaceState
+from studio.stages.optimize.gate import Gate
+from studio.stages.optimize.idea_tree import IdeaTree, classify_rejection, mutation_event
+from studio.stages.optimize.snapshotter import Snapshotter
+from studio.stages.split import TaskSplit, sample_held_in, split_tasks
+from studio.stages.optimize.strategist import Strategy
+from studio.config import Config
+from studio.core.harness import Harness
+from studio.core.observe import ProgressLog, decision_dict
+from studio.core.parts import PartMap
+from studio.core.state import RoundOutcome, WorkspaceState
 
 
 @dataclass

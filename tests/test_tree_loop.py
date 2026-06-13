@@ -13,13 +13,13 @@ import json
 from studio.backends.mock import MockBackend
 from studio.benchmark import toy_fixes
 from studio.benchmark.toy import FAMILIES, ToyBenchmark, build_toy_harness, toy_part_map
-from studio.components.evidence import (
+from studio.core.evidence import (
     EvidenceStore, TaskEvidence, TraceWindow, VerifierSignal, to_flat_excerpt,
 )
-from studio.components.ideator import CONSTRAINT_HEADER
-from studio.components.splitter import TaskSplit
+from studio.stages.optimize.ideator import CONSTRAINT_HEADER
+from studio.stages.split import TaskSplit
 from studio.config import Config, EditConfig, LoopConfig
-from studio.orchestrator import Orchestrator
+from studio.stages.optimize.orchestrator import Orchestrator
 
 
 class EvidenceToyBenchmark(ToyBenchmark):

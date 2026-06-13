@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..harness import Harness
+from ..core.harness import Harness
 from .base import Benchmark
 
 

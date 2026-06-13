@@ -7,11 +7,11 @@ from studio.backends._jsonio import extract_json as _extract_json
 from studio.backends.mock import MockBackend
 from studio.benchmark.base import Benchmark
 from studio.benchmark.toy import FAMILIES, build_toy_harness, toy_part_map
-from studio.components import mapper
-from studio.components.splitter import TaskSplit
+from studio.stages.optimize import mapper
+from studio.stages.split import TaskSplit
 from studio.config import Config, EditConfig, LoopConfig
-from studio.orchestrator import Orchestrator
-from studio.parts import PartMap, PartType
+from studio.stages.optimize.orchestrator import Orchestrator
+from studio.core.parts import PartMap, PartType
 
 
 # --- files_changed must include deleted files ---

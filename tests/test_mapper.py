@@ -1,7 +1,7 @@
 from studio.backends.mock import MockBackend
 from studio.benchmark.toy import build_toy_harness
-from studio.components import mapper
-from studio.parts import PartType
+from studio.stages.optimize import mapper
+from studio.core.parts import PartType
 
 
 def test_map_harness_parses_and_restricts(tmp_path):

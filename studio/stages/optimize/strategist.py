@@ -17,12 +17,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..backends.base import AgentResult, Backend
-from ..harness import Harness
+from studio.backends.base import AgentResult, Backend
+from studio.core.harness import Harness
 
 TAG = "strategist"
 BUILD_TAG = "builder"
-SKILL_PATH = Path(__file__).resolve().parent.parent / "skills" / "strategist" / "SKILL.md"
+# Resource lives at studio/skills/; this file is studio/stages/optimize/strategist.py
+# (parents[2] == the studio package root), so anchor there regardless of depth.
+SKILL_PATH = Path(__file__).resolve().parents[2] / "skills" / "strategist" / "SKILL.md"
 
 # Guidance for the GENERATE-from-scratch mode (workspace starts empty). Same
 # engine as editing — only the situation differs: there is nothing to edit yet,

@@ -2,8 +2,8 @@
 
 from studio.benchmark.toy import ToyBenchmark, build_toy_harness
 from studio.benchmark import toy_fixes
-from studio.components.gate import Gate
-from studio.components.splitter import split_tasks
+from studio.stages.optimize.gate import Gate
+from studio.stages.split import split_tasks
 from studio.config import PileConfig
 
 

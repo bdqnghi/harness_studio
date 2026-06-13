@@ -8,8 +8,8 @@ import pytest
 
 from studio.benchmark.base import Benchmark
 from studio.benchmark.nexau import NexauBenchmark
-from studio.components import diagnoser, runner
-from studio.components.evidence import to_flat_excerpt
+from studio.stages.optimize import diagnoser, runner
+from studio.core.evidence import to_flat_excerpt
 
 
 def _make_trial(jobs_dir, task, verifier_text, messages):
@@ -25,7 +25,7 @@ def _make_trial(jobs_dir, task, verifier_text, messages):
 
 
 def _make_harness(root, content="name: x\n"):
-    from studio.harness import Harness
+    from studio.core.harness import Harness
 
     root.mkdir(parents=True, exist_ok=True)
     (root / "code_agent.yaml").write_text(content)
@@ -97,7 +97,7 @@ class _StubBench(Benchmark):
 
 
 def test_runner_populates_trace(tmp_path):
-    from studio.harness import Harness
+    from studio.core.harness import Harness
 
     h = Harness(tmp_path / "h")
     (tmp_path / "h").mkdir()
@@ -130,7 +130,7 @@ def test_run_executes_full_cleanup_path(tmp_path, monkeypatch):
     into run() unnoticed)."""
     from pathlib import Path
 
-    from studio.harness import Harness
+    from studio.core.harness import Harness
 
     (tmp_path / "harbor").write_text("")  # harbor_bin must .exists()
     (tmp_path / "h").mkdir()
@@ -166,7 +166,7 @@ def test_force_build_passed_on_every_invocation(tmp_path, monkeypatch):
     makes the repeat builds cheap; the flag must never be skipped."""
     from pathlib import Path
 
-    from studio.harness import Harness
+    from studio.core.harness import Harness
 
     (tmp_path / "harbor").write_text("")
     (tmp_path / "h").mkdir()
@@ -200,7 +200,7 @@ def test_force_build_passed_on_every_invocation(tmp_path, monkeypatch):
 
 def test_run_raises_on_harbor_failure(tmp_path, monkeypatch):
     from studio.benchmark.kira import BenchmarkExecutionError
-    from studio.harness import Harness
+    from studio.core.harness import Harness
 
     (tmp_path / "harbor").write_text("")
     (tmp_path / "h").mkdir()

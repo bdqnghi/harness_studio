@@ -1,7 +1,7 @@
 from studio.benchmark.toy import build_toy_harness, toy_part_map
 from studio.benchmark import toy_fixes
-from studio.components import shell
-from studio.parts import PartType
+from studio.stages.optimize import shell
+from studio.core.parts import PartType
 
 
 def _pair(tmp_path):

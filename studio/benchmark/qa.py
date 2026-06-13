@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable
 
-from ..harness import Harness
+from ..core.harness import Harness
 from .base import Benchmark
 
 PROMPT_FILE = "system_prompt.md"

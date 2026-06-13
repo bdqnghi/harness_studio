@@ -29,8 +29,8 @@ from pathlib import Path
 from typing import Callable
 
 from .benchmark.base import Benchmark
-from .harness import Harness
-from .parts import PartMap
+from .core.harness import Harness
+from .core.parts import PartMap
 
 
 @dataclass
@@ -113,7 +113,7 @@ class Target:
                 f"target {self.name!r} has no seed harness and no cold_start_brief; "
                 "cannot start"
             )
-        from .components.strategist import build_harness
+        from .stages.optimize.strategist import build_harness
 
         return build_harness(
             backend, Path(workdir) / "cold_seed", self.cold_start_brief(),

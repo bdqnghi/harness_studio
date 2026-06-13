@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..config import HealthConfig
-from ..state import HealthCounters
+from studio.config import HealthConfig
+from studio.core.state import HealthCounters
 
 
 @dataclass

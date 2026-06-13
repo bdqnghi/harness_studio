@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import abc
 
-from ..harness import Harness
+from ..core.harness import Harness
 
 
 class Benchmark(abc.ABC):
@@ -55,13 +55,13 @@ class Benchmark(abc.ABC):
         trace is available, so the loop never depends on it."""
         return ""
 
-    # Structured failure evidence (components/evidence.py). Adapters that decode
+    # Structured failure evidence (core/evidence.py). Adapters that decode
     # their verifier output set ``evidence_store`` and override ``last_evidence``;
     # everything else falls back to the flat ``last_trace`` above. The localizer
-    # and editor consume this — see components/localizer.py.
+    # and editor consume this — see stages/optimize/localizer.py.
     evidence_store = None  # type: ignore[assignment]
 
     def last_evidence(self, task_id: str, *, harness: Harness | None = None):
-        """Structured :class:`~studio.components.evidence.TaskEvidence` for why
+        """Structured :class:`~studio.core.evidence.TaskEvidence` for why
         ``task_id`` failed, or ``None`` when unavailable. Default: none."""
         return None

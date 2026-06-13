@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ..harness import Harness
+from ..core.harness import Harness
 from .base import Benchmark
 
 # Terminal-Bench verifiers emit a reward; >= this counts as a pass.

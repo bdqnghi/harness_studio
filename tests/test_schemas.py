@@ -57,7 +57,7 @@ def test_diagnosis_signature_fields_validate():
 
 
 def test_diagnose_default_fills_signature():
-    from studio.components import diagnoser, runner
+    from studio.stages.optimize import diagnoser, runner
 
     class _Backend:
         def prompt_json(self, prompt, schema, *, tag="", model=None):

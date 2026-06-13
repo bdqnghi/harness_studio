@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..harness import Harness
+from studio.core.harness import Harness
 
 
 @dataclass

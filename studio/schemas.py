@@ -213,7 +213,7 @@ INSIGHT = {
     "properties": {"insight": {"type": "string"}},
 }
 
-# Localization: evidence-grounded, span/rule-level edit targets (components/
+# Localization: evidence-grounded, span/rule-level edit targets (stages/optimize/
 # localizer.py). Each target names the editable file + the span to change and
 # cites the exact evidence (transcript quote) and current harness text. The
 # orchestrator validates current_text / quotes are real substrings before trust.
@@ -257,4 +257,4 @@ LOCALIZATION = {
 }
 
 # (Cold-start no longer uses a fill schema: the coding agent generates the harness
-#  from scratch via strategist.build_harness — see components/strategist.py.)
+#  from scratch via strategist.build_harness — see stages/optimize/strategist.py.)

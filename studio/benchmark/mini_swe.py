@@ -33,9 +33,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ..components.evidence import EvidenceStore, evidence_from_trace
-from ..harness import Harness
-from ..parts import PartMap, PartType
+from ..core.evidence import EvidenceStore, evidence_from_trace
+from ..core.harness import Harness
+from ..core.parts import PartMap, PartType
 from .base import Benchmark
 # Reuse nexau's unit-tested helpers so the scoring/credential contract is shared.
 from .kira import BenchmarkExecutionError, require_complete_harbor_results

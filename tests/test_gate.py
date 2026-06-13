@@ -1,6 +1,6 @@
 from studio.benchmark.toy import FAMILIES, ToyBenchmark, build_toy_harness
 from studio.benchmark import toy_fixes
-from studio.components.gate import Gate
+from studio.stages.optimize.gate import Gate
 
 # Judging set with every family represented (2 tasks each).
 JUDGING = [f"{fam}-{i}" for fam in FAMILIES for i in (0, 1)]

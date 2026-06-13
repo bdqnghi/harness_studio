@@ -1,10 +1,10 @@
 """Directory-aware part map: the fairness fix that lets the optimizer ADD files
 (new tools/middleware/skills) under a mapped directory, like AHE can — not just
-edit pre-listed files. Locks in studio/parts.py + studio/components/shell.py."""
+edit pre-listed files. Locks in studio/core/parts.py + studio/stages/optimize/shell.py."""
 
-from studio.components import shell
-from studio.harness import Harness
-from studio.parts import PartMap, PartType
+from studio.stages.optimize import shell
+from studio.core.harness import Harness
+from studio.core.parts import PartMap, PartType
 from studio.benchmark.nexau import api_type_for
 
 

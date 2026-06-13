@@ -42,8 +42,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from ..benchmark.base import Benchmark
-from ..harness import Harness
+from studio.benchmark.base import Benchmark
+from studio.core.harness import Harness
 
 
 @dataclass

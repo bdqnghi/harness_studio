@@ -29,8 +29,8 @@ import hashlib
 import json
 from pathlib import Path
 
-from ..harness import Harness
-from ..parts import PartMap, PartType
+from ..core.harness import Harness
+from ..core.parts import PartMap, PartType
 from .base import Benchmark
 
 FAMILIES = ["echo", "reverse", "upper", "add"]

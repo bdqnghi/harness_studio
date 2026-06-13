@@ -8,8 +8,8 @@ error fed back, exactly like the edit loop.
 """
 
 from studio.backends.mock import MockBackend
-from studio.components.strategist import BUILD_TAG, build_harness
-from studio.parts import PartMap, PartType
+from studio.stages.optimize.strategist import BUILD_TAG, build_harness
+from studio.core.parts import PartMap, PartType
 from studio.targets import ColdStartBrief, Target, ToolSpec, get_target, register
 
 BRIEF = ColdStartBrief(

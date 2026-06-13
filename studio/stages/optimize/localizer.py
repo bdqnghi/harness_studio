@@ -30,9 +30,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .. import schemas
-from ..backends.base import Backend
-from ..harness import Harness
+from studio import schemas
+from studio.backends.base import Backend
+from studio.core.harness import Harness
 
 TAG = "localizer"
 

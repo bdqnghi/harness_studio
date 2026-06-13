@@ -5,7 +5,7 @@ adapter turns its raw verifier output (tau2's ``reward_info``, a coding bench's
 test stdout, ...) into a benchmark-agnostic :class:`TaskEvidence`: the mechanical
 checks that failed (:class:`VerifierSignal`) plus the *causal* transcript
 windows those failures point at (:class:`TraceWindow`). Everything downstream —
-the localizer (``components/localizer.py``) and the editor (``strategist``) —
+the localizer (``stages/optimize/localizer.py``) and the editor (``strategist``) —
 consumes only this structured form, so it never learns benchmark specifics.
 
 The two design rules that make it useful where the old blind 4-message tail was

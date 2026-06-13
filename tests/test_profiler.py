@@ -1,8 +1,8 @@
 """Profiler: per-task pass-rate + difficulty binning that drives stratified splits."""
 
 from studio.benchmark.base import Benchmark
-from studio.components.profiler import Profile, profile_harness
-from studio.harness import Harness
+from studio.stages.profile import Profile, profile_harness
+from studio.core.harness import Harness
 
 
 class _Bench(Benchmark):

@@ -117,14 +117,14 @@ for _dom, _bl in (("airline", 0.56), ("retail", 0.74), ("telecom", 0.34)):
 # trust anchor. See studio/benchmark/qa.py + qa_suites.py.
 
 def _qa_part_map():
-    from .parts import PartMap, PartType
+    from .core.parts import PartMap, PartType
     from .benchmark.qa import PROMPT_FILE
     return PartMap(parts={PartType.INSTRUCTIONS: [PROMPT_FILE]})
 
 
 def _qa_seed(suite, ws_prefix: str):
     from .benchmark.qa import PROMPT_FILE
-    from .harness import Harness
+    from .core.harness import Harness
     d = Path(tempfile.mkdtemp(prefix=ws_prefix))
     Harness(d).write_file(PROMPT_FILE, suite.seed_prompt)
     return Harness(d)

@@ -9,8 +9,8 @@ import random
 
 import pytest
 
-from studio.components.gate import GateDecision
-from studio.components.idea_tree import (
+from studio.stages.optimize.gate import GateDecision
+from studio.stages.optimize.idea_tree import (
     MAX_NOISE_RETRIES, IdeaTree, classify_rejection, mutation_event,
 )
 

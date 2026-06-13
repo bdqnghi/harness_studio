@@ -6,7 +6,7 @@ from studio.benchmark.qa import QABenchmark, QATask
 from studio.benchmark.qa_suites import (
     _grade_gsm8k, _grade_hotpot, _hotpot_context, get_suite,
 )
-from studio.harness import Harness
+from studio.core.harness import Harness
 
 
 def _harness(tmp_path, prompt="answer the question") -> Harness:

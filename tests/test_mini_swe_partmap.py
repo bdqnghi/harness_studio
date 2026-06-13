@@ -7,8 +7,8 @@ must raise before anything is invoked.
 import pytest
 
 from studio.benchmark.mini_swe import MiniSweBenchmark, mini_swe_part_map
-from studio.harness import Harness
-from studio.parts import PartMap, PartType
+from studio.core.harness import Harness
+from studio.core.parts import PartMap, PartType
 
 
 def test_part_map_is_a_partmap_with_expected_parts():

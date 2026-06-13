@@ -25,9 +25,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from studio.benchmark.kira import KiraBenchmark  # noqa: E402
-from studio.components import mapper, shell, strategist, structural_check  # noqa: E402
-from studio.harness import Harness  # noqa: E402
-from studio.parts import PartType  # noqa: E402
+from studio.stages.optimize import mapper, shell, strategist, structural_check  # noqa: E402
+from studio.core.harness import Harness  # noqa: E402
+from studio.core.parts import PartType  # noqa: E402
 
 KIRA = Path("/home/nghibui/codes/KIRA")
 INSTRUCTIONS_FILE = "prompt-templates/terminus-kira.txt"

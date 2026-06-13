@@ -9,8 +9,8 @@ from studio.benchmark.kira import BenchmarkExecutionError
 from studio.benchmark.tau2 import (
     Tau2Benchmark, tau2_part_map, tau2_seed_harness,
 )
-from studio.harness import Harness
-from studio.parts import PartType
+from studio.core.harness import Harness
+from studio.core.parts import PartType
 
 
 def _fake_repo(tmp_path):

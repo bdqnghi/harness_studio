@@ -7,8 +7,8 @@ gain. Re-calibrate occasionally (PRD §5.0b, §7).
 
 from __future__ import annotations
 
-from ..benchmark.base import Benchmark
-from ..harness import Harness
+from studio.benchmark.base import Benchmark
+from studio.core.harness import Harness
 
 
 def measure_wobble(

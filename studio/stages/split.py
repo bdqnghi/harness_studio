@@ -25,7 +25,7 @@ import hashlib
 import math
 from dataclasses import dataclass, field
 
-from ..config import PileConfig
+from studio.config import PileConfig
 
 
 @dataclass

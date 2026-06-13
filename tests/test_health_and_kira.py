@@ -3,10 +3,10 @@ import inspect
 import pytest
 
 from studio.benchmark import kira
-from studio.components import health
-from studio.components.gate import Gate
+from studio.stages.optimize import health
+from studio.stages.optimize.gate import Gate
 from studio.config import HealthConfig
-from studio.state import HealthCounters
+from studio.core.state import HealthCounters
 
 
 # --- health monitor ---
@@ -77,7 +77,7 @@ def test_complete_harbor_results_min_trials_floor(tmp_path):
 
 
 def test_kira_run_without_real_raises(tmp_path):
-    from studio.harness import Harness
+    from studio.core.harness import Harness
     bench = kira.KiraBenchmark(real=False)
     with pytest.raises(NotImplementedError):
         bench.run(Harness(tmp_path), ["t"])

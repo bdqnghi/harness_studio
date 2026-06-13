@@ -9,8 +9,8 @@ that outweighs the gain is still rejected. ``strict_dual`` restores per-slice ve
 from studio.benchmark import toy_fixes
 from studio.benchmark.base import Benchmark
 from studio.benchmark.toy import ToyBenchmark, build_toy_harness
-from studio.components.gate import Gate
-from studio.harness import Harness
+from studio.stages.optimize.gate import Gate
+from studio.core.harness import Harness
 
 JUDGE, REG = ["j1", "j2"], ["r1", "r2"]
 

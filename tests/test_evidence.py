@@ -1,6 +1,6 @@
 """Phase 1: structured evidence model + per-harness store."""
 
-from studio.components.evidence import (
+from studio.core.evidence import (
     EvidenceStore,
     TaskEvidence,
     TraceWindow,
@@ -134,7 +134,7 @@ def test_render_evidence_md_smoke():
 # --- Phase 7: coding-style evidence helper (nexau / mini-swe generalization) ---
 
 def test_evidence_from_trace_builds_signal_and_window():
-    from studio.components.evidence import evidence_from_trace
+    from studio.core.evidence import evidence_from_trace
     ev = evidence_from_trace(
         "write-compressor", 0.0,
         verifier_output="E FileNotFoundError: /app/out.txt\n2 failed",
@@ -150,6 +150,6 @@ def test_evidence_from_trace_builds_signal_and_window():
 
 
 def test_evidence_from_trace_passing_task_has_no_signal():
-    from studio.components.evidence import evidence_from_trace
+    from studio.core.evidence import evidence_from_trace
     ev = evidence_from_trace("t", 1.0, verifier_output="ok", messages=[])
     assert ev.signals == []

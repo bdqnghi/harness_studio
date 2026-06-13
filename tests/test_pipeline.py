@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 from studio import pipeline
-from studio.components.profiler import Profile
+from studio.stages.profile import Profile
 
 
 def _args(**kw):

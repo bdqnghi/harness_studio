@@ -1,7 +1,7 @@
 """Difficulty-stratified splits + the blind random fallback."""
 
-from studio.components.profiler import Profile
-from studio.components.splitter import random_split, stratified_split
+from studio.stages.profile import Profile
+from studio.stages.split import random_split, stratified_split
 
 
 def _disjoint(sp):

@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..harness import Harness
-from ..parts import PartMap, PartType
+from studio.core.harness import Harness
+from studio.core.parts import PartMap, PartType
 
 
 @dataclass

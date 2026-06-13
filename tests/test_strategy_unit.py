@@ -1,9 +1,9 @@
 """Unit tests for the diagnoser and the family-label derivation."""
 
 from studio.backends.mock import MockBackend
-from studio.components import diagnoser, strategist
-from studio.components.runner import Failure
-from studio.parts import PartType
+from studio.stages.optimize import diagnoser, strategist
+from studio.stages.optimize.runner import Failure
+from studio.core.parts import PartType
 
 
 def test_diagnoser_returns_validated_clusters():

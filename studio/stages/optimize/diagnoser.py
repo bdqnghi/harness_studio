@@ -8,10 +8,10 @@ gate still has the final say, so a wrong blame just wastes one strategy.
 
 from __future__ import annotations
 
-from .. import schemas
-from ..backends.base import Backend
-from ..parts import PartType
-from .runner import Failure
+from studio import schemas
+from studio.backends.base import Backend
+from studio.core.parts import PartType
+from studio.stages.optimize.runner import Failure
 
 TAG = "diagnoser"
 

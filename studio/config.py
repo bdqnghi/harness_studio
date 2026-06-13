@@ -46,7 +46,7 @@ class LoopConfig:
     segment_length: int = 10  # rounds per segment (the deep-audit/rewind boundary)
     wobble_runs: int = 5  # repeated runs at setup to measure the noise floor
     hypotheses_per_direction: int = 4  # text hypotheses per ideation call
-    # Context localization (components/localizer.py): "off" (diagnosis-only, the
+    # Context localization (stages/optimize/localizer.py): "off" (diagnosis-only, the
     # legacy behavior) | "inline" | "agentic" | "auto" (pick by difficulty).
     localizer: str = "off"
 

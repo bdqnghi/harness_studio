@@ -43,8 +43,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ..components.evidence import EvidenceStore, evidence_from_trace
-from ..harness import Harness
+from ..core.evidence import EvidenceStore, evidence_from_trace
+from ..core.harness import Harness
 from .base import Benchmark
 from .kira import BenchmarkExecutionError, require_complete_harbor_results
 

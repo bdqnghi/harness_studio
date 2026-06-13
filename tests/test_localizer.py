@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 from studio.backends.mock import MockBackend
-from studio.components import localizer
-from studio.components.evidence import EvidenceStore, TaskEvidence, TraceWindow, VerifierSignal
-from studio.harness import Harness
+from studio.stages.optimize import localizer
+from studio.core.evidence import EvidenceStore, TaskEvidence, TraceWindow, VerifierSignal
+from studio.core.harness import Harness
 
 
 def _harness(tmp_path, body="# Policy\n\nBe helpful and resolve the request.\n"):

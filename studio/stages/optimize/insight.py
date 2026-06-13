@@ -12,9 +12,9 @@ empty insight, never a failed round.
 
 from __future__ import annotations
 
-from .. import schemas
-from ..backends.base import Backend
-from .idea_tree import Node
+from studio import schemas
+from studio.backends.base import Backend
+from studio.stages.optimize.idea_tree import Node
 
 TAG = "insight"
 DIRECTION_TAG = "insight-direction"

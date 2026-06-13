@@ -8,10 +8,10 @@ any unmapped file is do-not-touch.
 
 from __future__ import annotations
 
-from .. import schemas
-from ..backends.base import Backend
-from ..harness import Harness
-from ..parts import ABSENT, PartMap, PartType
+from studio import schemas
+from studio.backends.base import Backend
+from studio.core.harness import Harness
+from studio.core.parts import ABSENT, PartMap, PartType
 
 TAG = "mapper"
 

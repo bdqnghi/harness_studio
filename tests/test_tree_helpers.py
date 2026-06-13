@@ -2,9 +2,9 @@
 
 from studio import schemas
 from studio.backends.mock import MockBackend
-from studio.components import ideator, insight, strategist
-from studio.components.gate import GateDecision
-from studio.components.idea_tree import IdeaTree
+from studio.stages.optimize import ideator, insight, strategist
+from studio.stages.optimize.gate import GateDecision
+from studio.stages.optimize.idea_tree import IdeaTree
 
 
 def _tree(tmp_path):

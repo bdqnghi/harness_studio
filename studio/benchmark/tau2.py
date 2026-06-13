@@ -29,15 +29,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ..components.evidence import (
+from ..core.evidence import (
     EvidenceStore,
     TaskEvidence,
     VerifierSignal,
     select_windows,
     to_flat_excerpt,
 )
-from ..harness import Harness
-from ..parts import PartMap, PartType
+from ..core.harness import Harness
+from ..core.parts import PartMap, PartType
 from .base import Benchmark
 from .kira import BenchmarkExecutionError
 

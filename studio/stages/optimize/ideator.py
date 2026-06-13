@@ -15,9 +15,9 @@ Two calls replace the classic path's n full Tier-A proposer runs:
 
 from __future__ import annotations
 
-from .. import schemas
-from ..backends.base import Backend
-from .idea_tree import Node
+from studio import schemas
+from studio.backends.base import Backend
+from studio.stages.optimize.idea_tree import Node
 
 ROUTER_TAG = "direction-router"
 IDEATE_TAG = "ideator"
