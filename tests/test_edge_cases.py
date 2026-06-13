@@ -2,7 +2,6 @@
 
 from studio.benchmark.toy import ToyBenchmark, build_toy_harness
 from studio.benchmark import toy_fixes
-from studio.components.family_map import FamilyMap
 from studio.components.gate import Gate
 from studio.components.splitter import split_tasks
 from studio.config import PileConfig
@@ -33,20 +32,6 @@ def test_splitter_piles_are_disjoint():
     for i in range(len(sets)):
         for j in range(i + 1, len(sets)):
             assert sets[i].isdisjoint(sets[j])
-
-
-def test_family_map_name_parsing_handles_colons_in_reason():
-    fm = FamilyMap()
-    fm.falsify("middleware", "trap: failed audit: twice")
-    assert fm.do_not_repeat() == ["middleware"]
-
-
-def test_family_map_promote_then_falsify_removes_from_works():
-    fm = FamilyMap()
-    fm.promote("tool_code", "helped once")
-    fm.falsify("tool_code", "later revealed as a trap")
-    assert "tool_code" not in fm._family_names(fm.works)
-    assert "tool_code" in fm.do_not_repeat()
 
 
 def test_harness_copy_to_overwrites_existing(tmp_path):

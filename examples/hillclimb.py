@@ -11,7 +11,7 @@ optimizer, and reports the verdict against the target's published baseline.
 
   # warm-start hill-climb on tau2 telecom (beat published Pass^1 0.34)
   python examples/hillclimb.py --target tau2-telecom --model gpt-4.1 \
-      --user-model gpt-4.1-mini --rounds 8 --optimizer tree
+      --user-model gpt-4.1-mini --rounds 8
 
   # cold-start: synthesize a harness from nothing, then climb
   python examples/hillclimb.py --target browsecomp --cold-start --model gpt-4.1
@@ -78,7 +78,7 @@ def run(args) -> dict:
 
     mode = "cold-start" if (args.cold_start or target.seed_harness() is None) else "warm-start"
     print(f"=== hillclimb: target={args.target} mode={mode} model={args.model} "
-          f"optimizer={args.optimizer} localizer={args.localizer} ===")
+          f"localizer={args.localizer} ===")
     print(f"tasks N={len(tasks)} | held_in={len(split.held_in)} "
           f"regression={len(split.regression)} | locked held_out={len(split.held_out)}")
     print(f"baseline bar: {target.baseline_score} ({target.baseline_note})")
@@ -108,8 +108,8 @@ def run(args) -> dict:
         piles=PileConfig(round_size=min(args.round_size, len(split.held_in)),
                          regression=0, held_out=0),
         loop=LoopConfig(rounds=args.rounds, segment_length=args.segment_length,
-                        wobble_runs=args.wobble_runs, strategies_per_round=args.strategies,
-                        optimizer=args.optimizer, hypotheses_per_direction=args.hypotheses,
+                        wobble_runs=args.wobble_runs,
+                        hypotheses_per_direction=args.hypotheses,
                         localizer=args.localizer),
         gate=GateConfig(borderline_extra_runs=args.borderline_runs,
                         strict_dual=args.strict_gate),
@@ -157,10 +157,9 @@ def main() -> None:
     ap.add_argument("--proposer-model", default=None, help="override proposer model (default: --model)")
     ap.add_argument("--user-model", default=None, help="tau2 user-simulator model")
     ap.add_argument("--cold-start", action="store_true", help="synthesize a harness even if a seed exists")
-    ap.add_argument("--optimizer", choices=("classic", "tree"), default="tree")
     ap.add_argument("--localizer", choices=("off", "inline", "agentic", "auto"),
                     default="auto", help="evidence-grounded context localization "
-                    "(off=legacy diagnosis-only); applies to both optimizer paths")
+                    "(off=legacy diagnosis-only)")
     ap.add_argument("--strict-gate", action="store_true",
                     help="require EACH slice (held_in AND regression) to not-regress; "
                          "default is net pooled gain (a small within-noise regression "
@@ -169,7 +168,6 @@ def main() -> None:
     ap.add_argument("--workspace", default="/tmp/sho_hillclimb")
     ap.add_argument("--rounds", type=int, default=8)
     ap.add_argument("--segment-length", type=int, default=2)
-    ap.add_argument("--strategies", type=int, default=2)
     ap.add_argument("--hypotheses", type=int, default=4)
     ap.add_argument("--round-size", type=int, default=16)
     ap.add_argument("--wobble-runs", type=int, default=3)

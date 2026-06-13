@@ -140,13 +140,17 @@ def test_repair_touching_do_not_touch_is_reverted(tmp_path):
         json_responses={
             "diagnoser": [[{"pattern_id": "p", "description": "x", "root_cause": "x",
                             "failing_task_ids": ["reverse-0"], "blamed_part": "tool_code",
-                            "confidence": 0.5}]],
-            "reviewer": [{"keep": [], "drop": []}],
+                            "confidence": 0.5, "addressable": True}]],
+            "direction-router": [{"assignments": [{"pattern_id": "p", "direction_id": "",
+                                  "new_title": "fix ops", "new_mechanism": "ops buggy"}]}],
+            "ideator": [{"hypotheses": [{"title": "fix reverse", "mechanism": "m",
+                         "hypothesis": "make reverse correct", "observable": "reverse passes"}]}],
+            "insight": [{"insight": "fixing the op works"}],
+            "insight-direction": [{"insight": "ops were the bottleneck"}],
         },
         agent_actions={"strategist": [fixes.break_boot], "strategist-repair": [repair]},
     )
-    config = Config(loop=LoopConfig(rounds=1, segment_length=10, wobble_runs=2,
-                                    strategies_per_round=1),
+    config = Config(loop=LoopConfig(rounds=1, segment_length=10, wobble_runs=2),
                     edits=EditConfig(allow_repair=True))
     src = build_toy_harness(tmp_path / "src")
     original_config = src.read_file("config.json")

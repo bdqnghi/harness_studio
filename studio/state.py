@@ -84,10 +84,6 @@ class WorkspaceState:
         return self.root / "logs"
 
     @property
-    def family_map_path(self) -> Path:
-        return self.root / "family_map.md"
-
-    @property
     def evidence_path(self) -> Path:
         return self.root / "evidence.jsonl"
 

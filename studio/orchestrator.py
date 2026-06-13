@@ -1,14 +1,15 @@
-"""The Orchestrator (PRD §5.12): the deterministic spine of both loops.
+"""The Orchestrator: the deterministic spine of the hypothesis-tree optimizer.
 
-The **inner loop** (per round): find failures -> diagnose+blame -> propose several
-competing strategies -> shell -> review -> rank -> structural check -> gate ->
-snapshot. The gate is the only place an AI proposal becomes a harness mutation.
+The **inner loop** (per round): find failures -> diagnose -> route failure
+patterns onto the hypothesis tree -> select/ideate one hypothesis -> localize
+(evidence-grounded edit targets) -> implement it -> shell -> structural check ->
+gate -> snapshot. The gate is the only place an AI proposal becomes a harness
+mutation, and it accepts on the NET pooled gain (held_in u regression).
 
 The **outer loop** (per segment of K rounds): the deep auditor re-checks the
-harness on the big audit set (rewinding secret regressions, surfacing traps), then
-the family map is updated — cheaply by rules, or by the Tier-A Meta-agent on a
-plateau — revising *how* the next segment proposes. The family map is the shared
-file joining the two loops.
+live harness on held_in with fresh rollouts, rewinding a noise-mirage accept and
+falsifying the offending tree nodes; insights propagate so dead ideas are never
+re-bought.
 
 The Orchestrator owns all state and validates that no AI component crosses the
 gate boundary: the gate and deep auditor get a benchmark, never a Backend.
@@ -26,10 +27,8 @@ from .benchmark.base import Benchmark
 from .benchmark.instrument import InstrumentedBenchmark, RewardHackError
 from .components import (
     deep_auditor, diagnoser, health, ideator, insight, localizer, mapper,
-    meta_agent, ranker, reviewer, runner, shell, strategist, structural_check,
-    wobble,
+    runner, shell, strategist, structural_check, wobble,
 )
-from .components.family_map import FamilyMap, init_map
 from .components.gate import Gate
 from .components.idea_tree import IdeaTree, classify_rejection, mutation_event
 from .components.snapshotter import Snapshotter
@@ -48,7 +47,6 @@ class RunResult:
     final_score: float
     wobble: float
     rounds: list[RoundOutcome] = field(default_factory=list)
-    family_map: FamilyMap | None = None
     task_runs: int = 0  # task-score evaluations actually executed (cost)
     cache_hits: int = 0
     halted: bool = False  # set if a reward-hacking incident stopped the run
@@ -109,22 +107,15 @@ class Orchestrator:
         self.progress = ProgressLog(self.state.progress_path)
 
         # Outer-loop state.
-        self.family_map: FamilyMap = init_map(self.state.family_map_path)
-        self._segment_accepted: list[str] = []  # families accepted this segment
         self._best_audit_score: float | None = None
         self._best_dir = self.state.root / "best"
 
-        # The tree optimizer (A/B treatment arm). The classic arm must never
-        # create tree state — the flag fully selects the round implementation.
-        if config.loop.optimizer not in ("classic", "tree"):
-            raise ValueError(f"unknown optimizer {config.loop.optimizer!r}")
-        self.tree: IdeaTree | None = None
-        self._segment_accepted_nodes: list[str] = []  # tree: node ids this segment
-        if config.loop.optimizer == "tree":
-            self.tree = IdeaTree.load_or_create(
-                self.state.root / "idea_tree.json",
-                md_path=self.state.root / "tree.md",
-            )
+        # The hypothesis tree is the durable memory of the optimizer.
+        self._segment_accepted_nodes: list[str] = []  # node ids accepted this segment
+        self.tree: IdeaTree = IdeaTree.load_or_create(
+            self.state.root / "idea_tree.json",
+            md_path=self.state.root / "tree.md",
+        )
 
     # --- setup ---
 
@@ -145,7 +136,7 @@ class Orchestrator:
     def run(self) -> RunResult:
         self.progress.emit(
             "run_start",
-            optimizer=getattr(self.config.loop, "optimizer", "classic"),
+            optimizer="tree",
             rounds=self.config.loop.rounds,
             segment_length=self.config.loop.segment_length,
             n_held_in=len(self.split.held_in),
@@ -174,16 +165,12 @@ class Orchestrator:
 
         total = self.config.loop.rounds
         seg_len = max(1, self.config.loop.segment_length)
-        tree_mode = self.config.loop.optimizer == "tree"
         halted = False
         try:
             for r in range(1, total + 1):
                 self.progress.emit("round_start", round=r)
                 started = time.monotonic()
-                if tree_mode:
-                    self._round_tree(r)
-                else:
-                    self._round(r)
+                self._round_tree(r)
                 outcome = self.state.evidence[-1] if self.state.evidence else None
                 fields = outcome.to_dict() if outcome else {}
                 fields.pop("round", None)  # the explicit round kwarg wins
@@ -196,15 +183,9 @@ class Orchestrator:
                 )
                 self._assess_health()
                 if r % seg_len == 0 and r < total:  # segment boundary (not last)
-                    if tree_mode:
-                        self._segment_boundary_tree(r)
-                    else:
-                        self._segment_boundary(r)
+                    self._segment_boundary_tree(r)
             if total > 0:  # deep-audit the trailing segment the loop never closed
-                if tree_mode:
-                    self._finalize_tree(total)
-                else:
-                    self._finalize(total)
+                self._finalize_tree(total)
         except RewardHackError as e:
             self.state.health.reward_hack_incidents += 1
             self.state.log_health(f"HALT reward_hack: {e}")
@@ -216,7 +197,6 @@ class Orchestrator:
             final_score=self._final_score(),
             wobble=self.state.wobble,
             rounds=list(self.state.evidence),
-            family_map=self.family_map,
             task_runs=self.benchmark.task_runs,
             cache_hits=self.benchmark.cache_hits,
             halted=halted,
@@ -227,75 +207,6 @@ class Orchestrator:
             self.state.log_health(f"{sig.name}: {sig.detail} -> {sig.response}")
             self.progress.emit("health_signal", name=sig.name, detail=sig.detail,
                                response=sig.response)
-
-    # --- outer loop: the segment boundary (PRD §5.10, §5.11) ---
-
-    def _audit_and_update(self, round_idx: int):
-        """Deep-audit the segment, rewind a secret regression, and update the
-        family map by rule. Returns (verdict, was_plateau). Resets the segment."""
-        verdict = deep_auditor.audit(
-            self.benchmark, self.harness, self.split.held_in,
-            best_score=self._best_audit_score, wobble=self.state.wobble,
-        )
-        traps: list[str] = []
-        if verdict.verdict == "worse":
-            # Secretly worse: rewind to the best harness; the families accepted
-            # this segment are traps (passed fast gate, failed deep audit).
-            self.harness = Harness(self._best_dir).copy_to(self.state.harness_dir)
-            traps = list(dict.fromkeys(self._segment_accepted))
-        elif verdict.verdict == "better":
-            self._best_audit_score = verdict.score
-            self.harness.copy_to(self._best_dir)
-
-        survived = [f for f in self._segment_accepted if f not in traps]
-        meta_agent.rule_based_update(self.family_map, survived, traps)
-        was_plateau = not self._segment_accepted
-        self._segment_accepted = []
-        return verdict, was_plateau
-
-    def _segment_boundary(self, round_idx: int) -> None:
-        verdict, plateau = self._audit_and_update(round_idx)
-        self.progress.emit("segment_boundary", round=round_idx,
-                           audit_verdict=verdict.verdict,
-                           audit_score=round(verdict.score, 4), plateau=plateau)
-        # Escalate to the Tier-A Meta-agent on a plateau (no accepted gains).
-        if plateau:
-            self._escalate_meta_agent(round_idx, verdict)
-        self.family_map.save(self.state.family_map_path)
-        if self._remap:  # codebase changed as edits landed; re-label it
-            self.part_map = mapper.map_harness(self.backend, self.harness)
-
-    def _finalize(self, round_idx: int) -> None:
-        """Close the trailing segment the round loop never reached a boundary for:
-        deep-audit + rewind + rule-based map update, but no meta escalation and no
-        re-map (the run is ending). This guarantees the final number is audited."""
-        verdict, plateau = self._audit_and_update(round_idx)
-        self.progress.emit("segment_boundary", round=round_idx, final=True,
-                           audit_verdict=verdict.verdict,
-                           audit_score=round(verdict.score, 4), plateau=plateau)
-        self.family_map.save(self.state.family_map_path)
-
-    def _escalate_meta_agent(self, round_idx: int, verdict) -> None:
-        mech = self.state.root / "mechanism"
-        mech.mkdir(parents=True, exist_ok=True)
-        self.family_map.save(mech / "family_map.md")
-        (mech / "segment_evidence.md").write_text(self._segment_evidence_md(round_idx, verdict))
-        meta_agent.escalate(self.backend, mech)
-        # Read back the (only) mechanism file the meta-agent may edit.
-        self.family_map = FamilyMap.load(mech / "family_map.md")
-
-    def _segment_evidence_md(self, round_idx: int, verdict) -> str:
-        recent = [o for o in self.state.evidence if o.round_idx <= round_idx][-self.config.loop.segment_length:]
-        lines = [
-            f"# Segment ending at round {round_idx}", "",
-            f"Deep-audit verdict: {verdict.verdict} (score {verdict.score:.3f})",
-            f"Accepted families this segment: {self._segment_accepted or '(none — plateau)'}",
-            f"Consecutive gate rejections: {self.state.health.gate_rejections}", "",
-            "## Round outcomes", *(f"- round {o.round_idx}: "
-              f"{'accept ' + o.family_label if o.accepted else 'reject'} — {o.note}"
-              for o in recent),
-        ]
-        return "\n".join(lines) + "\n"
 
     def _localize(self, round_idx: int, patterns: list[dict], round_dir):
         """Materialize this round's failure evidence and run the localizer.
@@ -324,58 +235,6 @@ class Orchestrator:
                            n_targets=len(localization), mode=self.config.loop.localizer)
         return localization, evidence_dir
 
-    def _round(self, round_idx: int) -> None:
-        # 1. Find failures, then diagnose + blame.
-        batch = sample_held_in(
-            self.split, self.config.piles.round_size, self.config.seed, round_idx
-        )
-        report = runner.run_batch(self.benchmark, self.harness, batch)
-        self.progress.emit("batch_done", round=round_idx,
-                           pass_rate=round(report.pass_rate, 4),
-                           n_failures=len(report.failures))
-        if not report.failures:
-            self._reject(round_idx, "no failures on the held-in batch")
-            return
-        diagnosis = diagnoser.diagnose(self.backend, report.failures)
-        self.progress.emit("diagnosis_done", round=round_idx,
-                           n_patterns=len(diagnosis),
-                           blamed_parts=[d.get("blamed_part", "") for d in diagnosis])
-
-        # 2. Localize: evidence-grounded edit targets + the failing-task evidence.
-        round_dir = self.state.candidates_dir / f"round_{round_idx:03d}"
-        evidence = {f.task_id: f.trace for f in report.failures if f.trace}
-        localization, evidence_dir = self._localize(round_idx, diagnosis, round_dir)
-
-        # 3. Propose several competing whole-strategies (each its own candidate).
-        strategies = strategist.propose_many(
-            self.backend, self.harness, round_dir, diagnosis,
-            n=self.config.loop.strategies_per_round,
-            id_prefix=f"r{round_idx}",
-            do_not_touch=self.part_map.do_not_touch,
-            family_map_text=self._family_map_text(),
-            editable_files=self.part_map.editable_files(),
-            localization=localization, evidence=evidence, evidence_dir=evidence_dir,
-        )
-        self.progress.emit("proposal_done", round=round_idx, strategies=[
-            {"strategy_id": s.strategy_id, "intent": s.intent} for s in strategies
-        ])
-
-        # 3. Code shell on each: revert do-not-touch, enforce budget, label family.
-        survivors = self._shell_filter(strategies)
-        if not survivors:
-            self._reject(round_idx, "all strategies dropped at the shell")
-            return
-
-        # 4. Review (prune known-dead / incoherent) then rank for testing order.
-        survivors = self._review(survivors)
-        if not survivors:
-            self._reject(round_idx, "all strategies dropped at review")
-            return
-        survivors = self._rank(survivors)
-
-        # 5. Structural check + gate, top-1 with fall-through (PRD §5.8, §11 Q3).
-        self._test_in_order(round_idx, survivors)
-
     # --- round helpers ---
 
     def _shell_filter(self, strategies: list[Strategy]) -> list[Strategy]:
@@ -395,86 +254,6 @@ class Orchestrator:
             survivors.append(s)
         return survivors
 
-    def _summaries(self, strategies: list[Strategy]) -> list[dict]:
-        return [
-            {
-                "strategy_id": s.strategy_id,
-                "family_label": s.family_label,
-                "changed_parts": sorted(p.value for p in s.changed_parts),
-                "intent": s.intent,
-            }
-            for s in strategies
-        ]
-
-    def _review(self, strategies: list[Strategy]) -> list[Strategy]:
-        verdict = reviewer.review(
-            self.backend, self._summaries(strategies), self._do_not_repeat()
-        )
-        keep = set(verdict.get("keep", []))
-        dropped = {d["strategy_id"] for d in verdict.get("drop", [])}
-        # Keep anything explicitly kept or not explicitly dropped (err toward keeping).
-        return [s for s in strategies if s.strategy_id in keep or s.strategy_id not in dropped]
-
-    def _rank(self, strategies: list[Strategy]) -> list[Strategy]:
-        order = ranker.rank(self.backend, self._summaries(strategies))
-        by_id = {s.strategy_id: s for s in strategies}
-        return [by_id[i] for i in order if i in by_id]
-
-    def _test_in_order(self, round_idx: int, strategies: list[Strategy]) -> None:
-        gate = Gate(
-            self.benchmark, self.split.held_in, self.state.wobble,
-            regression_tasks=self.split.regression,  # dual-split when populated (choose_split); [] -> single-split
-            borderline_extra_runs=self.config.gate.borderline_extra_runs,
-            strict_dual=self.config.gate.strict_dual,
-        )
-        last_note = "no strategy passed the gate"
-        for s in strategies:
-            struct = structural_check.check(
-                s.candidate, self.benchmark, backend=self.backend,
-                do_not_touch=self.part_map.do_not_touch,
-                allow_repair=self.config.edits.allow_repair,
-            )
-            if not struct.ok:
-                self.state.avoid_list.append(struct.error)
-                last_note = f"structural check failed: {struct.error}"
-                continue
-            if struct.repaired:
-                # The repair agent edited files; re-enforce the shell invariants
-                # (it could have touched a do-not-touch file or blown the budget).
-                res = shell.enforce(
-                    self.harness, s.candidate, self.part_map,
-                    budget_per_part=self.config.edits.budget_per_part,
-                )
-                if not res.ok or not res.changed_parts:
-                    last_note = "repair violated shell invariants"
-                    continue
-            # Only a pure file addition is structurally additive. Rewriting or
-            # deleting any existing file can alter behavior the visible gate does
-            # not exercise, regardless of which part type owns that file.
-            additive = shell.is_strictly_additive(self.harness, s.candidate)
-            decision = gate.evaluate(self.harness, s.candidate, additive=additive)
-            self.progress.emit("gate_decision", round=round_idx,
-                               strategy_id=s.strategy_id, additive=additive,
-                               **decision_dict(decision))
-            if decision.accept:
-                self.harness = s.candidate.copy_to(self.state.harness_dir)
-                self.state.health.gate_rejections = 0
-                self.state.health.empty_rounds = 0
-                self._segment_accepted.append(s.family_label)
-                self.state.record(RoundOutcome(
-                    round_idx, True, decision.gain, decision.old_score,
-                    decision.new_score, family_label=s.family_label,
-                    note=f"{s.strategy_id} accepted: {decision.reason}",
-                ))
-                self.snapshotter.save(self.harness, round_idx, self._held_in_score())
-                return
-            last_note = f"{s.strategy_id} rejected: {decision.reason}"
-        # Strategies were produced and tested but none passed the gate: this is a
-        # gate-rejection round, not an "empty" one (PRD §7 keeps the signals apart).
-        self.state.health.gate_rejections += 1
-        self.state.health.empty_rounds = 0
-        self._reject(round_idx, last_note, empty=False)
-
     def _reject(self, round_idx: int, note: str, *, empty: bool = True) -> None:
         if empty:  # nothing testable was produced (dropped at shell/review, or no failures)
             self.state.health.empty_rounds += 1
@@ -484,15 +263,7 @@ class Orchestrator:
         )
         self.snapshotter.save(self.harness, round_idx, score)
 
-    # --- mechanism state read by the inner loop each round ---
-
-    def _family_map_text(self) -> str:
-        return self.family_map.to_text()
-
-    def _do_not_repeat(self) -> list[str]:
-        return self.family_map.do_not_repeat()
-
-    # --- the tree optimizer (treatment arm; classic methods above untouched) ---
+    # --- the tree optimizer (the only optimizer path) ---
     #
     # Per round: diagnose (shared) -> drop non-addressable patterns -> route
     # patterns onto direction nodes -> Thompson-select a direction -> take a

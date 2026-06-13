@@ -116,60 +116,6 @@ class Strategy:
     result: AgentResult | None = None
 
 
-# --- diversification: distinct angles for the competing strategies ---
-
-_INFRA_KEYS = (
-    "api error", "rate limit", "ratelimit", "429", "5xx", "timeout", "timed out",
-    "transient", "crash", "failed to start", "initializ", "infrastructure",
-    "no agent responses", "empty trajectory", "connection",
-)
-
-
-def _looks_infrastructural(diagnosis: list[dict]) -> bool:
-    """Do the failures look like transient API/infra errors (rate limits,
-    timeouts, init crashes) rather than reasoning bugs?"""
-    text = " ".join(
-        f"{d.get('root_cause','')} {d.get('description','')} {d.get('blamed_part','')}"
-        for d in diagnosis
-    ).lower()
-    return any(k in text for k in _INFRA_KEYS)
-
-
-def diversification_hints(diagnosis: list[dict], n: int) -> list[str]:
-    blamed = []
-    for d in diagnosis:
-        part = d.get("blamed_part")
-        if part and part != "unclear" and part not in blamed:
-            blamed.append(part)
-    hints = []
-    # When the diagnosis points at transient infrastructure/API failures, the
-    # highest-leverage harness fix is robustness MIDDLEWARE — try it first.
-    if _looks_infrastructural(diagnosis):
-        hints.append(
-            "The failures look like transient infrastructure/API errors (rate limits, "
-            "429/5xx, timeouts, or the agent crashing at startup). Add robustness "
-            "MIDDLEWARE and register it in code_agent.yaml: retry-with-exponential-backoff "
-            "on transient LLM/API errors, and cap or stream oversized tool outputs so a "
-            "single large result can't crash the turn. Make the agent resilient, not smarter."
-        )
-    if blamed:
-        hints.append(f"Fix the root cause directly by editing the blamed part(s): {', '.join(blamed)}.")
-    hints.append("Add a missing capability: create a new tool (e.g. file read/write/edit, "
-                 "search, or a task-specific helper) and register it in code_agent.yaml.")
-    hints.append("Address the failures by clarifying the instructions (add an explicit rule, "
-                 "workflow, or worked example) or by adding planning/output-management middleware.")
-    hints.append("Make a different, minimal coordinated change than the obvious one.")
-    # de-dup, pad to n
-    seen, out = set(), []
-    for h in hints:
-        if h not in seen:
-            seen.add(h)
-            out.append(h)
-    while len(out) < n:
-        out.append(out[len(out) % len(hints)])
-    return out[:n]
-
-
 def _format_diagnosis(diagnosis: list[dict]) -> str:
     if not diagnosis:
         return "(no specific diagnosis available)"
@@ -244,56 +190,6 @@ def _format_localization(localization: list[dict] | None) -> str:
             lines.append(f"  evidence [{e.get('task_id', '')}]: {str(e.get('quote', ''))[:200]}")
     return "\n".join(lines)
 
-
-def _instruction(diagnosis, hint, do_not_touch, family_map_text, editable_files=None,
-                 localization=None, evidence=None) -> str:
-    dnt = ", ".join(do_not_touch or []) or "(none)"
-    fm = f"\n\nStrategy-family map (prefer 'works', avoid 'falsified'):\n{family_map_text}" if family_map_text else ""
-    return (
-        "Improve this harness so it passes the failing tasks. Make ONE coherent, "
-        "minimal strategy. You may touch several parts if they form one coordinated "
-        f"fix, but keep it small and keep the harness booting.\n\n"
-        f"Approach for this strategy: {hint}\n\n"
-        f"Diagnosis of this round's failures:\n{_format_diagnosis(diagnosis)}\n\n"
-        f"Do-not-touch files: {dnt}{_editable_block(editable_files)}"
-        f"{_format_localization(localization)}{_format_evidence(evidence)}{fm}"
-    )
-
-
-def propose_many(
-    backend: Backend,
-    base: Harness,
-    round_dir: Path,
-    diagnosis: list[dict],
-    *,
-    n: int,
-    id_prefix: str,
-    do_not_touch: list[str] | None = None,
-    family_map_text: str = "",
-    model: str | None = None,
-    editable_files: list[str] | None = None,
-    localization: list[dict] | None = None,
-    evidence: dict | None = None,
-    evidence_dir: Path | None = None,
-) -> list[Strategy]:
-    """Run the coding agent ``n`` times (distinct angles) → ``n`` candidate strategies."""
-    hints = diversification_hints(diagnosis, n)
-    read_dirs = [Path(evidence_dir)] if evidence_dir else None
-    strategies: list[Strategy] = []
-    for i, hint in enumerate(hints):
-        cand_dir = Path(round_dir) / f"strategy_{i}"
-        candidate = base.copy_to(cand_dir)
-        result = backend.run_agent(
-            _instruction(diagnosis, hint, do_not_touch, family_map_text, editable_files,
-                         localization, evidence),
-            workspace=cand_dir, skill=load_skill(), tag=TAG, model=model,
-            read_dirs=read_dirs,
-        )
-        strategies.append(
-            Strategy(strategy_id=f"{id_prefix}s{i}", candidate=candidate,
-                     intent=hint, result=result)
-        )
-    return strategies
 
 
 def implement_hypothesis(

@@ -43,11 +43,9 @@ class LoopConfig:
     """Inner/outer loop tuning."""
 
     rounds: int = 8
-    segment_length: int = 10  # rounds per segment (outer loop); bounded by meta
+    segment_length: int = 10  # rounds per segment (the deep-audit/rewind boundary)
     wobble_runs: int = 5  # repeated runs at setup to measure the noise floor
-    strategies_per_round: int = 3  # competing strategies the Strategist proposes
-    optimizer: str = "classic"  # "classic" (propose-n, gate fall-through) | "tree"
-    hypotheses_per_direction: int = 4  # tree: text hypotheses per ideation call
+    hypotheses_per_direction: int = 4  # text hypotheses per ideation call
     # Context localization (components/localizer.py): "off" (diagnosis-only, the
     # legacy behavior) | "inline" | "agentic" | "auto" (pick by difficulty).
     localizer: str = "off"
@@ -62,28 +60,6 @@ class HealthConfig:
 
 
 @dataclass
-class EvalPlanConfig:
-    """Power-based, calibration-aware split tuning (splitter.choose_split)."""
-
-    adaptive: bool = False        # use choose_split instead of fixed piles
-    round_size: int = 32          # tasks run per round (the SGD mini-batch)
-    z: float = 1.96               # confidence for power sizing
-    delta_round: float = 0.12     # per-round effect the gate must resolve (coarse)
-    val_floor: int = 8            # min stable gate (judging) size
-    reg_floor: int = 16           # min regression (do-no-harm) size
-    reg_cap: int = 32             # max regression size -> ~constant across N
-    pool_mult: int = 4            # held-in pool = pool_mult * round_size
-    pool_cap: int = 256           # held-in pool ceiling -> ~constant across N
-    test_floor: int = 25          # min locked-test size for a trustworthy verdict
-    test_budget_cap: int = 0      # >0: grade only a representative subsample of test
-    heavy_sec: float = 3600.0     # tasks at/above this go ONLY to the locked test
-    calibration_k: int = 3        # repeated held-in baseline rollouts for noise
-    opt_k: int = 1                # rollouts per gate check (cheap, per-round)
-    test_k: int = 3               # rollouts for the locked-test verdict (trustworthy)
-    calibration_path: str = ""    # reuse a cached Calibration if set
-
-
-@dataclass
 class Config:
     seed: int = 0
     noise_per_mille: int = 0  # injected toy wobble; 0 for exact tests
@@ -94,7 +70,6 @@ class Config:
     loop: LoopConfig = field(default_factory=LoopConfig)
     edits: EditConfig = field(default_factory=EditConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
-    eval_plan: EvalPlanConfig = field(default_factory=EvalPlanConfig)
 
     # --- (de)serialization ---
 
@@ -103,8 +78,6 @@ class Config:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
-        eval_plan = dict(data.get("eval_plan", {}))
-        eval_plan.pop("delta_final", None)  # removed: actual detectable_final is reported
         return cls(
             seed=data.get("seed", 0),
             noise_per_mille=data.get("noise_per_mille", 0),
@@ -115,7 +88,6 @@ class Config:
             loop=LoopConfig(**data.get("loop", {})),
             edits=EditConfig(**data.get("edits", {})),
             health=HealthConfig(**data.get("health", {})),
-            eval_plan=EvalPlanConfig(**eval_plan),
         )
 
     @classmethod

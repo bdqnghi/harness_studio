@@ -212,21 +212,6 @@ def test_implement_hypothesis_without_localization_is_unchanged(tmp_path):
     assert "Failure evidence (verifier output" not in instr
 
 
-def test_propose_many_carries_evidence(tmp_path):
-    """Classic path also gets the evidence (localization applies everywhere)."""
-    from studio.benchmark.toy import build_toy_harness
-
-    base = build_toy_harness(tmp_path / "src")
-    backend = MockBackend(agent_actions={"strategist": [lambda ws: None]})
-    strategist.propose_many(
-        backend, base, tmp_path / "round", PATTERNS, n=1, id_prefix="r1",
-        editable_files=["policy.md"],
-        evidence={"t9": "reward=0.0\n[assistant] booked the wrong flight"},
-    )
-    _, instr = backend.prompt_log[0]
-    assert "Failure evidence" in instr and "booked the wrong flight" in instr
-
-
 def test_ideate_includes_trace_evidence(tmp_path):
     d = _tree(tmp_path).add_direction("dir", "mech", {}, 1)
     backend = MockBackend(json_responses={"ideator": [HYPS]})

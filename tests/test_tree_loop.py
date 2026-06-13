@@ -125,8 +125,8 @@ def _tree_backend():
 
 
 def _config(**loop_kw):
-    defaults = dict(rounds=3, wobble_runs=3, strategies_per_round=2,
-                    optimizer="tree", hypotheses_per_direction=2)
+    defaults = dict(rounds=3, wobble_runs=3, 
+                    hypotheses_per_direction=2)
     defaults.update(loop_kw)
     return Config(loop=LoopConfig(**defaults), edits=EditConfig(allow_repair=False))
 
@@ -214,35 +214,11 @@ def test_tree_persists_and_resumes(tmp_path):
     assert orch2.tree.node("d1h1").status == "falsified"
 
 
-def test_tree_emits_mutations_classic_does_not(tmp_path):
+def test_tree_emits_mutations_and_persists_tree(tmp_path):
     _, orch = _run_tree(tmp_path)
     events = [json.loads(line) for line in orch.state.progress_path.read_text().splitlines()]
     assert any(e["event"] == "tree_mutation" for e in events)
-
-    # Classic arm: no tree file, no tree events, no tree helper calls.
-    classic_backend = MockBackend(
-        json_responses={
-            "diagnoser": [DIAG],
-            "reviewer": [{"keep": [], "drop": []}],
-        },
-        agent_actions={"strategist": [toy_fixes.enable_upper]},
-    )
-    orch_c = Orchestrator(
-        workspace=tmp_path / "ws_classic",
-        source_harness=build_toy_harness(tmp_path / "src_c"),
-        benchmark=ToyBenchmark(per_family=12, noise_per_mille=0),
-        backend=classic_backend,
-        config=Config(loop=LoopConfig(rounds=1, wobble_runs=3, strategies_per_round=1)),
-        split=SPLIT,
-        part_map=toy_part_map(),
-    )
-    orch_c.run()
-    assert orch_c.tree is None
-    assert not (orch_c.state.root / "idea_tree.json").exists()
-    tags = {t for _, t in classic_backend.calls}
-    assert not tags & {"ideator", "direction-router", "insight", "insight-direction"}
-    events_c = [json.loads(line) for line in orch_c.state.progress_path.read_text().splitlines()]
-    assert not any(e["event"] == "tree_mutation" for e in events_c)
+    assert (orch.state.root / "idea_tree.json").exists()  # durable tree state
 
 
 def test_non_addressable_patterns_stop_the_round(tmp_path):
@@ -275,28 +251,6 @@ def test_localization_reaches_editor_tree(tmp_path):
                for p in impl_prompts)                              # validated target reached editor
     # ideation was also grounded in the transcripts
     assert any("FAILMARK-" in p for t, p in backend.prompt_log if t == "ideator")
-
-
-def test_localization_reaches_editor_classic(tmp_path):
-    """Same improvement applies to the classic path (no A/B freeze)."""
-    bench = EvidenceToyBenchmark(per_family=12, noise_per_mille=0)
-    backend = MockBackend(
-        json_responses={"diagnoser": [DIAG], "reviewer": [{"keep": [], "drop": []}],
-                        "localizer": [_LOC]},
-        agent_actions={"strategist": [toy_fixes.enable_upper]},
-    )
-    orch = Orchestrator(
-        workspace=tmp_path / "ws", source_harness=build_toy_harness(tmp_path / "src"),
-        benchmark=bench, backend=backend,
-        config=Config(loop=LoopConfig(rounds=1, wobble_runs=3, strategies_per_round=1,
-                                      localizer="inline")),
-        split=SPLIT, part_map=toy_part_map(),
-    )
-    orch.run()
-    assert ("prompt_json", "localizer") in backend.calls
-    sp = [p for t, p in backend.prompt_log if t == "strategist"]
-    assert any("FAILMARK-add-6" in p for p in sp)
-    assert any("Localized edit target" in p for p in sp)
 
 
 def test_localizer_off_makes_no_localizer_calls(tmp_path):
