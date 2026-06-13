@@ -113,3 +113,11 @@ def test_hotpot_context_renders_numbered_sources():
 def test_hotpot_suite_registered():
     s = get_suite("hotpot")
     assert s.name == "hotpot" and s.default_limit == 300
+
+
+def test_searchqa_suite_registered_and_f1_grader():
+    s = get_suite("searchqa")
+    assert s.name == "searchqa" and s.default_limit == 300
+    t = QATask(id="0", question="clue", gold=["Lou Gehrig"])
+    assert s.grader("<answer>Lou Gehrig</answer>", t) == 1.0
+    assert s.grader("<answer>nobody</answer>", t) == 0.0

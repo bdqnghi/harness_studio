@@ -257,6 +257,39 @@ followed the instructions.
 """
 
 
+# --- SearchQA (Jeopardy-style trivia; search snippets provided as context) -
+
+def _load_searchqa(cache_dir: Path, limit: int | None) -> list[QATask]:
+    n = limit or 300
+    rows = _fetch_hf_rows("lucadiliello/searchqa", "default", "validation", n,
+                          cache_dir / "searchqa_val.jsonl")
+    out = []
+    for i, r in enumerate(rows):
+        golds = r.get("answers") or []
+        if not golds:
+            continue
+        out.append(QATask(id=str(r.get("key", i)), question=r["question"],
+                          gold=list(golds), context=(r.get("context") or "")[:4000]))
+    return out
+
+
+def _grade_searchqa(output: str, task: QATask) -> float:
+    """Token-F1 of the extracted short answer vs the gold answer(s)."""
+    return _f1(_extract_tagged(output), task.gold)
+
+
+_SEARCHQA_SEED = """\
+You are answering a Jeopardy-style trivia clue. You are given the clue and a set
+of web search snippets that contain the answer.
+
+Read the snippets, identify the single best answer to the clue, and give the
+SHORTEST exact answer (a name, place, title, or number — no sentence, no
+explanation).
+
+Output the final answer wrapped in tags, like: <answer>...</answer>
+"""
+
+
 # --- registry -------------------------------------------------------------
 
 _SUITES: dict[str, Suite] = {
@@ -294,6 +327,18 @@ _SUITES: dict[str, Suite] = {
         domain="instruction following with verifiable constraints",
         io_contract=("A request with explicit formatting/length/keyword/case "
                      "constraints. Produce content that satisfies ALL of them."),
+    ),
+    "searchqa": Suite(
+        name="searchqa",
+        load=_load_searchqa,
+        grader=_grade_searchqa,
+        seed_prompt=_SEARCHQA_SEED,
+        baseline_score=None,
+        baseline_note="SearchQA (lucadiliello/searchqa validation), token-F1; model-dependent",
+        domain="Jeopardy-style trivia QA over provided search snippets",
+        io_contract=("A trivia clue plus web search snippets. Give the shortest "
+                     "exact answer in <answer>…</answer>."),
+        default_limit=300,
     ),
 }
 
