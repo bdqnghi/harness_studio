@@ -208,6 +208,55 @@ Output the final answer wrapped in tags, like: <answer>...</answer>
 """
 
 
+# --- IFEval (instruction-following; programmatic constraint checks) --------
+
+def _load_ifeval(cache_dir: Path, limit: int | None) -> list[QATask]:
+    from .ifeval_checks import supported
+
+    rows = _fetch_hf_rows("google/IFEval", "default", "train", limit or 541,
+                          cache_dir / "ifeval_train.jsonl")
+    tasks = []
+    for r in rows:
+        ids = r.get("instruction_id_list", [])
+        # keep only prompts whose every constraint we can verify faithfully
+        if not ids or not all(supported(i) for i in ids):
+            continue
+        kwargs = [{k: v for k, v in d.items() if v is not None} for d in r.get("kwargs", [])]
+        tasks.append(QATask(
+            id=str(r.get("key")), question=r["prompt"],
+            meta={"instruction_id_list": ids, "kwargs": kwargs},
+        ))
+        if limit and len(tasks) >= limit:
+            break
+    return tasks
+
+
+def _grade_ifeval(output: str, task: QATask) -> float:
+    """Fraction of the prompt's instructions the response satisfies (loose,
+    per-instruction accuracy). The model's raw text IS the deliverable here —
+    no answer extraction."""
+    from .ifeval_checks import check
+
+    ids = task.meta.get("instruction_id_list", [])
+    kwargs = task.meta.get("kwargs", [])
+    if not ids:
+        return 0.0
+    ok = sum(check(i, output, kwargs[j] if j < len(kwargs) else {})
+             for j, i in enumerate(ids))
+    return ok / len(ids)
+
+
+_IFEVAL_SEED = """\
+You are a precise assistant. Follow EVERY explicit instruction in the user's
+request exactly — word/sentence/paragraph counts, required or forbidden words,
+formatting (bullets, titles, highlights, JSON), case, punctuation, and any
+start/end phrasing. If multiple constraints apply, satisfy all of them at once.
+
+Output only the requested content — no preamble, no explanation of how you
+followed the instructions.
+"""
+
+
 # --- registry -------------------------------------------------------------
 
 _SUITES: dict[str, Suite] = {
@@ -233,6 +282,18 @@ _SUITES: dict[str, Suite] = {
         io_contract=("A question plus numbered source paragraphs. Combine facts "
                      "across sources; answer concisely in <answer>…</answer>."),
         default_limit=300,
+    ),
+    "ifeval": Suite(
+        name="ifeval",
+        load=_load_ifeval,
+        grader=_grade_ifeval,
+        seed_prompt=_IFEVAL_SEED,
+        baseline_score=None,
+        baseline_note=("IFEval (verifiable-subset; per-instruction accuracy). "
+                       "Regex tokenization, not the official nltk harness."),
+        domain="instruction following with verifiable constraints",
+        io_contract=("A request with explicit formatting/length/keyword/case "
+                     "constraints. Produce content that satisfies ALL of them."),
     ),
 }
 

@@ -170,5 +170,5 @@ def _qa_target(suite_name: str) -> Target:
     )
 
 
-for _qa in ("gsm8k", "hotpot"):
+for _qa in ("gsm8k", "hotpot", "ifeval"):
     register(f"qa-{_qa}", (lambda n=_qa: _qa_target(n)))
