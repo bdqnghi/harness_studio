@@ -113,7 +113,7 @@ class Target:
                 f"target {self.name!r} has no seed harness and no cold_start_brief; "
                 "cannot start"
             )
-        from .stages.optimize.strategist import build_harness
+        from .stages.optimize.edit.strategist import build_harness
 
         return build_harness(
             backend, Path(workdir) / "cold_seed", self.cold_start_brief(),

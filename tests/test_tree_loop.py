@@ -16,7 +16,7 @@ from studio.benchmark.toy import FAMILIES, ToyBenchmark, build_toy_harness, toy_
 from studio.core.evidence import (
     EvidenceStore, TaskEvidence, TraceWindow, VerifierSignal, to_flat_excerpt,
 )
-from studio.stages.optimize.ideator import CONSTRAINT_HEADER
+from studio.stages.optimize.propose.ideator import CONSTRAINT_HEADER
 from studio.stages.split import TaskSplit
 from studio.config import Config, EditConfig, LoopConfig
 from studio.stages.optimize.orchestrator import Orchestrator

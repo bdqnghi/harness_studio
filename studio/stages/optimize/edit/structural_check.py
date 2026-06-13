@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from studio.backends.base import Backend
 from studio.benchmark.base import Benchmark
 from studio.core.harness import Harness
-from studio.stages.optimize import strategist
+from studio.stages.optimize.edit import strategist
 
 
 @dataclass

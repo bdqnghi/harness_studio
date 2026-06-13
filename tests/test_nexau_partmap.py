@@ -2,7 +2,7 @@
 (new tools/middleware/skills) under a mapped directory, like AHE can — not just
 edit pre-listed files. Locks in studio/core/parts.py + studio/stages/optimize/shell.py."""
 
-from studio.stages.optimize import shell
+from studio.stages.optimize.edit import shell
 from studio.core.harness import Harness
 from studio.core.parts import PartMap, PartType
 from studio.benchmark.nexau import api_type_for

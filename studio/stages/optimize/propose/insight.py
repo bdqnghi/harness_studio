@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from studio import schemas
 from studio.backends.base import Backend
-from studio.stages.optimize.idea_tree import Node
+from studio.stages.optimize.propose.idea_tree import Node
 
 TAG = "insight"
 DIRECTION_TAG = "insight-direction"

@@ -1,6 +1,6 @@
 from studio.benchmark.toy import build_toy_harness, toy_part_map
 from studio.benchmark import toy_fixes
-from studio.stages.optimize import shell
+from studio.stages.optimize.edit import shell
 from studio.core.parts import PartType
 
 

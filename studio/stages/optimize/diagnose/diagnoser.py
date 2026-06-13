@@ -11,7 +11,7 @@ from __future__ import annotations
 from studio import schemas
 from studio.backends.base import Backend
 from studio.core.parts import PartType
-from studio.stages.optimize.runner import Failure
+from studio.stages.optimize.diagnose.runner import Failure
 
 TAG = "diagnoser"
 

@@ -9,8 +9,8 @@ import random
 
 import pytest
 
-from studio.stages.optimize.acceptance import AcceptanceDecision
-from studio.stages.optimize.idea_tree import (
+from studio.stages.optimize.evaluate.acceptance import AcceptanceDecision
+from studio.stages.optimize.propose.idea_tree import (
     MAX_NOISE_RETRIES, IdeaTree, classify_rejection, mutation_event,
 )
 

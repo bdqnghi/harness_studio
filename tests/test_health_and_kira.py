@@ -3,8 +3,8 @@ import inspect
 import pytest
 
 from studio.benchmark import kira
-from studio.stages.optimize import health
-from studio.stages.optimize.acceptance import AcceptanceCheck
+from studio.stages.optimize.record import health
+from studio.stages.optimize.evaluate.acceptance import AcceptanceCheck
 from studio.config import HealthConfig
 from studio.core.state import HealthCounters
 

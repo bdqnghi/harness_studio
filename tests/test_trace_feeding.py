@@ -8,7 +8,7 @@ import pytest
 
 from studio.benchmark.base import Benchmark
 from studio.benchmark.nexau import NexauBenchmark
-from studio.stages.optimize import diagnoser, runner
+from studio.stages.optimize.diagnose import diagnoser, runner
 from studio.core.evidence import to_flat_excerpt
 
 

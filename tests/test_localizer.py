@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from studio.backends.mock import MockBackend
-from studio.stages.optimize import localizer
+from studio.stages.optimize.edit import localizer
 from studio.core.evidence import EvidenceStore, TaskEvidence, TraceWindow, VerifierSignal
 from studio.core.harness import Harness
 

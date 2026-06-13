@@ -1,8 +1,9 @@
 """Unit tests for the diagnoser and the family-label derivation."""
 
 from studio.backends.mock import MockBackend
-from studio.stages.optimize import diagnoser, strategist
-from studio.stages.optimize.runner import Failure
+from studio.stages.optimize.diagnose import diagnoser
+from studio.stages.optimize.edit import strategist
+from studio.stages.optimize.diagnose.runner import Failure
 from studio.core.parts import PartType
 
 

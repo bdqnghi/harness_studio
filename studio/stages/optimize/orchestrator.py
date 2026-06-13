@@ -25,15 +25,16 @@ from pathlib import Path
 from studio.backends.base import Backend
 from studio.benchmark.base import Benchmark
 from studio.benchmark.instrument import InstrumentedBenchmark, RewardHackError
-from studio.stages.optimize import (
-    deep_auditor, diagnoser, health, ideator, insight, localizer, mapper,
-    runner, shell, strategist, structural_check, noise_floor,
-)
-from studio.stages.optimize.acceptance import AcceptanceCheck
-from studio.stages.optimize.idea_tree import IdeaTree, classify_rejection, mutation_event
-from studio.stages.optimize.snapshotter import Snapshotter
+from studio.stages.optimize.diagnose import diagnoser, runner
+from studio.stages.optimize.propose import ideator, insight
+from studio.stages.optimize.edit import localizer, mapper, shell, strategist, structural_check
+from studio.stages.optimize.evaluate import deep_auditor, noise_floor
+from studio.stages.optimize.record import health
+from studio.stages.optimize.evaluate.acceptance import AcceptanceCheck
+from studio.stages.optimize.propose.idea_tree import IdeaTree, classify_rejection, mutation_event
+from studio.stages.optimize.record.snapshotter import Snapshotter
 from studio.stages.split import TaskSplit, sample_held_in, split_tasks
-from studio.stages.optimize.strategist import Strategy
+from studio.stages.optimize.edit.strategist import Strategy
 from studio.config import Config
 from studio.core.harness import Harness
 from studio.core.observe import ProgressLog, decision_dict

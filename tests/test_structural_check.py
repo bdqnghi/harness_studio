@@ -3,7 +3,7 @@ from pathlib import Path
 from studio.backends.mock import MockBackend
 from studio.benchmark.toy import ToyBenchmark, build_toy_harness
 from studio.benchmark import toy_fixes
-from studio.stages.optimize import structural_check
+from studio.stages.optimize.edit import structural_check
 
 
 def test_passes_for_bootable_candidate(tmp_path):

@@ -2,7 +2,7 @@
 
 from studio.benchmark.toy import ToyBenchmark, build_toy_harness
 from studio.benchmark import toy_fixes
-from studio.stages.optimize.acceptance import AcceptanceCheck
+from studio.stages.optimize.evaluate.acceptance import AcceptanceCheck
 from studio.stages.split import split_tasks
 from studio.config import PileConfig
 

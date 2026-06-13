@@ -7,7 +7,7 @@ from studio.backends._jsonio import extract_json as _extract_json
 from studio.backends.mock import MockBackend
 from studio.benchmark.base import Benchmark
 from studio.benchmark.toy import FAMILIES, build_toy_harness, toy_part_map
-from studio.stages.optimize import mapper
+from studio.stages.optimize.edit import mapper
 from studio.stages.split import TaskSplit
 from studio.config import Config, EditConfig, LoopConfig
 from studio.stages.optimize.orchestrator import Orchestrator

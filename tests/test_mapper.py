@@ -1,6 +1,6 @@
 from studio.backends.mock import MockBackend
 from studio.benchmark.toy import build_toy_harness
-from studio.stages.optimize import mapper
+from studio.stages.optimize.edit import mapper
 from studio.core.parts import PartType
 
 

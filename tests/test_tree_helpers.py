@@ -2,9 +2,10 @@
 
 from studio import schemas
 from studio.backends.mock import MockBackend
-from studio.stages.optimize import ideator, insight, strategist
-from studio.stages.optimize.acceptance import AcceptanceDecision
-from studio.stages.optimize.idea_tree import IdeaTree
+from studio.stages.optimize.propose import ideator, insight
+from studio.stages.optimize.edit import strategist
+from studio.stages.optimize.evaluate.acceptance import AcceptanceDecision
+from studio.stages.optimize.propose.idea_tree import IdeaTree
 
 
 def _tree(tmp_path):

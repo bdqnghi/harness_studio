@@ -25,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from studio.benchmark.kira import KiraBenchmark  # noqa: E402
-from studio.stages.optimize import mapper, shell, strategist, structural_check  # noqa: E402
+from studio.stages.optimize.edit import mapper, shell, strategist, structural_check  # noqa: E402
 from studio.core.harness import Harness  # noqa: E402
 from studio.core.parts import PartType  # noqa: E402
 

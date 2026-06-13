@@ -22,9 +22,9 @@ from studio.core.harness import Harness
 
 TAG = "strategist"
 BUILD_TAG = "builder"
-# Resource lives at studio/skills/; this file is studio/stages/optimize/strategist.py
-# (parents[2] == the studio package root), so anchor there regardless of depth.
-SKILL_PATH = Path(__file__).resolve().parents[2] / "skills" / "strategist" / "SKILL.md"
+# Resource lives at studio/skills/; this file is
+# studio/stages/optimize/edit/strategist.py (parents[3] == the studio package root).
+SKILL_PATH = Path(__file__).resolve().parents[3] / "skills" / "strategist" / "SKILL.md"
 
 # Guidance for the GENERATE-from-scratch mode (workspace starts empty). Same
 # engine as editing — only the situation differs: there is nothing to edit yet,
