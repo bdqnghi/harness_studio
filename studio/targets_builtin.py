@@ -152,7 +152,7 @@ def _qa_target(suite_name: str) -> Target:
 
     def make_bench(cfg: TargetConfig):
         cache = Path(cfg.extra.get("cache_dir") or DEFAULT_CACHE)
-        limit = cfg.extra.get("limit")
+        limit = cfg.extra.get("limit") or suite.default_limit
         tasks = suite.load(cache, limit)
         return QABenchmark(
             tasks=tasks, grader=suite.grader, model=cfg.model, k=cfg.k,
@@ -170,5 +170,5 @@ def _qa_target(suite_name: str) -> Target:
     )
 
 
-for _qa in ("gsm8k",):
+for _qa in ("gsm8k", "hotpot"):
     register(f"qa-{_qa}", (lambda n=_qa: _qa_target(n)))

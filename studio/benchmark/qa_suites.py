@@ -38,6 +38,7 @@ class Suite:
     domain: str = ""                                   # for the cold-start brief
     io_contract: str = ""
     temperature: float = 0.0
+    default_limit: int | None = None                   # cap for huge remote splits
     extra: dict = field(default_factory=dict)
 
 
@@ -52,6 +53,31 @@ def _download(url: str, dst: Path) -> Path:
 
 def _read_jsonl(path: Path) -> list[dict]:
     return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+
+
+def _fetch_hf_rows(dataset: str, config: str, split: str, n: int, dst: Path) -> list[dict]:
+    """Fetch up to ``n`` rows from the HF datasets-server (plain JSON over HTTP —
+    no ``datasets`` lib, no parquet), caching the result to ``dst``. Pages in
+    chunks of 100 (the server's max ``length``)."""
+    if dst.exists() and dst.stat().st_size > 0:
+        rows = _read_jsonl(dst)
+        if len(rows) >= n:
+            return rows[:n]
+    rows: list[dict] = []
+    base = "https://datasets-server.huggingface.co/rows"
+    for offset in range(0, n, 100):
+        length = min(100, n - offset)
+        url = (f"{base}?dataset={dataset}&config={config}&split={split}"
+               f"&offset={offset}&length={length}")
+        req = urllib.request.Request(url, headers={"User-Agent": "curl/8"})
+        page = json.loads(urllib.request.urlopen(req, timeout=60).read())
+        batch = [r["row"] for r in page.get("rows", [])]
+        rows.extend(batch)
+        if len(batch) < length:
+            break  # ran out of data
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text("\n".join(json.dumps(r) for r in rows))
+    return rows[:n]
 
 
 def _norm(s: str) -> str:
@@ -137,6 +163,51 @@ format (digits only, no units, no commas):
 """
 
 
+# --- HotpotQA (multi-hop QA; distractor = paragraphs provided inline) ------
+
+def _hotpot_context(ctx: dict) -> str:
+    """Render the distractor config's parallel {title:[...], sentences:[[...]]}
+    arrays into readable, numbered source paragraphs."""
+    titles = ctx.get("title", []) or []
+    sents = ctx.get("sentences", []) or []
+    parts = []
+    for i, title in enumerate(titles):
+        body = "".join(sents[i]) if i < len(sents) else ""
+        parts.append(f"[{i + 1}] {title}: {body}")
+    return "Sources:\n" + "\n".join(parts)
+
+
+def _load_hotpot(cache_dir: Path, limit: int | None) -> list[QATask]:
+    n = limit or 500
+    rows = _fetch_hf_rows("hotpotqa/hotpot_qa", "distractor", "validation", n,
+                          cache_dir / "hotpot_distractor_val.jsonl")
+    return [
+        QATask(id=str(r.get("id", i)), question=r["question"],
+               gold=[r["answer"]], context=_hotpot_context(r.get("context", {})))
+        for i, r in enumerate(rows)
+    ]
+
+
+def _grade_hotpot(output: str, task: QATask) -> float:
+    """SQuAD-style token-F1 of the extracted answer vs the gold answer —
+    continuous in [0,1], good hill-climb signal for multi-hop QA."""
+    return _f1(_extract_tagged(output), task.gold)
+
+
+_HOTPOT_SEED = """\
+# Multi-hop question answering
+
+You are given a question and a set of numbered source paragraphs. Read the
+sources and reason across MULTIPLE of them to find the answer — the answer
+usually requires combining facts from two different paragraphs.
+
+Base your answer ONLY on the provided sources. Keep the final answer as short as
+possible (a name, entity, number, or yes/no — no explanation).
+
+Output the final answer wrapped in tags, like: <answer>...</answer>
+"""
+
+
 # --- registry -------------------------------------------------------------
 
 _SUITES: dict[str, Suite] = {
@@ -150,6 +221,18 @@ _SUITES: dict[str, Suite] = {
         domain="grade-school math word problems",
         io_contract=("A math word problem. Reason step by step, then output the "
                      "final integer answer on its own line after '#### '."),
+    ),
+    "hotpot": Suite(
+        name="hotpot",
+        load=_load_hotpot,
+        grader=_grade_hotpot,
+        seed_prompt=_HOTPOT_SEED,
+        baseline_score=None,
+        baseline_note="HotpotQA distractor (validation), token-F1; model-dependent",
+        domain="multi-hop question answering over provided sources",
+        io_contract=("A question plus numbered source paragraphs. Combine facts "
+                     "across sources; answer concisely in <answer>…</answer>."),
+        default_limit=300,
     ),
 }
 

@@ -3,7 +3,9 @@
 from pathlib import Path
 
 from studio.benchmark.qa import QABenchmark, QATask
-from studio.benchmark.qa_suites import _grade_gsm8k, get_suite
+from studio.benchmark.qa_suites import (
+    _grade_gsm8k, _grade_hotpot, _hotpot_context, get_suite,
+)
 from studio.harness import Harness
 
 
@@ -90,3 +92,24 @@ def test_gsm8k_suite_registered_and_seed_prompt():
     s = get_suite("gsm8k")
     assert s.name == "gsm8k"
     assert "####" in s.seed_prompt  # seed instructs the parseable format
+
+
+# --- HotpotQA grader + context rendering (deterministic, no network) ---
+
+def test_hotpot_f1_grader():
+    t = QATask(id="0", question="q", gold=["Scott Derrickson"])
+    assert _grade_hotpot("<answer>Scott Derrickson</answer>", t) == 1.0   # exact -> F1 1.0
+    assert _grade_hotpot("<answer>no idea</answer>", t) == 0.0            # disjoint -> 0
+    partial = _grade_hotpot("<answer>Scott</answer>", t)
+    assert 0.0 < partial < 1.0                                           # token overlap
+
+
+def test_hotpot_context_renders_numbered_sources():
+    ctx = {"title": ["A", "B"], "sentences": [["s1.", "s2."], ["t1."]]}
+    rendered = _hotpot_context(ctx)
+    assert "[1] A: s1.s2." in rendered and "[2] B: t1." in rendered
+
+
+def test_hotpot_suite_registered():
+    s = get_suite("hotpot")
+    assert s.name == "hotpot" and s.default_limit == 300
