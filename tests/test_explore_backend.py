@@ -7,15 +7,15 @@ import json
 import pytest
 
 from studio import schemas
-from studio.backends.gemini import GeminiBackend, GeminiBackendError
+from studio.backends.llm_loop import LLMLoopBackend, LLMBackendError
 from studio.backends.mock import MockBackend
 
 # Reuse the fake client harness from the Tier-A/B backend tests.
-from tests.test_gemini_backend import FakeClient, _tools
+from tests.test_llm_loop import FakeClient, _tools
 
 
 def _backend(script, **kw):
-    return GeminiBackend(client=FakeClient(script), **kw)
+    return LLMLoopBackend(client=FakeClient(script), **kw)
 
 
 _GOOD = {"targets": [{"pattern_id": "p1", "target_file": "policy.md",
@@ -63,13 +63,13 @@ def test_run_explore_raises_if_never_submits(tmp_path):
     (tmp_path / "policy.md").write_text("x\n")
     script = [_tools([{"name": "list_dir", "args": {"path": "."}}]) for _ in range(20)]
     b = _backend(script, max_turns=3)
-    with pytest.raises(GeminiBackendError):
+    with pytest.raises(LLMBackendError):
         b.run_explore("localize", read_dirs=[tmp_path], schema=schemas.LOCALIZATION, tag="localizer")
 
 
 def test_run_explore_requires_read_dirs(tmp_path):
     b = _backend([])
-    with pytest.raises(GeminiBackendError):
+    with pytest.raises(LLMBackendError):
         b.run_explore("x", read_dirs=[], schema=schemas.LOCALIZATION, tag="localizer")
 
 

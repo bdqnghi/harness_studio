@@ -1,169 +1,57 @@
 #!/usr/bin/env python
-"""Target-agnostic hill-climb driver — run SHO on ANY registered benchmark.
+"""Target-agnostic hill-climb driver — a thin CLI over ``studio.pipeline``.
 
-This is the generalized replacement for the TB2-specific driver: it resolves a
-``Target`` from the registry, handles warm-start (mutate the shipped baseline
-harness) OR cold-start (synthesize a harness when none ships), runs the
-optimizer, and reports the verdict against the target's published baseline.
+Resolves a registered ``Target``, then runs the pipeline:
+resolve harness (warm shipped / cold-generated) → profile the input harness over
+the benchmark → difficulty-stratified split → optimize (tree + net gate +
+localizer) → grade on the locked held_out.
 
-  # preview the plan (no spend)
-  python examples/hillclimb.py --target tau2-telecom --dry-run
+  # preview (no spend)
+  python examples/hillclimb.py --target tau2-airline --dry-run
 
-  # warm-start hill-climb on tau2 telecom (beat published Pass^1 0.34)
-  python examples/hillclimb.py --target tau2-telecom --model gpt-4.1 \
-      --user-model gpt-4.1-mini --rounds 8
+  # profile only: per-task pass/fail + trajectories -> profile.json
+  python examples/hillclimb.py --target tau2-airline --profile-only --profile-k 2 \
+      --model gpt-4.1-mini --user-model gpt-4.1-mini
 
-  # cold-start: synthesize a harness from nothing, then climb
-  python examples/hillclimb.py --target browsecomp --cold-start --model gpt-4.1
+  # cold-start hill-climb (generate a harness, profile it, then climb)
+  python examples/hillclimb.py --target tau2-retail --cold-start --model gpt-4.1-mini
 """
 from __future__ import annotations
 
 import argparse
-import json
-import statistics
 import sys
-from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import studio.targets_builtin  # noqa: E402,F401  (populates the Target registry)
-from studio.backends.factory import make_backend  # noqa: E402
-from studio.components.splitter import TaskSplit, detectable_delta  # noqa: E402
-from studio.config import Config, EditConfig, GateConfig, LoopConfig, PileConfig  # noqa: E402
-from studio.targets import TargetConfig, get_target, list_targets  # noqa: E402
-
-
-def simple_split(tasks: list[str], *, seed: int, held_in: int, reg: int,
-                 held_out_cap: int = 0) -> TaskSplit:
-    """Deterministic 3-set split for fast benchmarks (no heavy-task handling).
-
-    held_in is a SMALL FIXED SCOOP (the gate scores old-vs-new on it AND each
-    round samples a batch from it — so it must stay cheap); regression is a
-    disjoint do-no-harm slice; held_out is the locked test (capped, since every
-    held_out task is graded at test_k twice — surplus beyond the cap is unused)."""
-    import hashlib
-
-    order = sorted(tasks, key=lambda t: hashlib.sha256(f"{seed}:{t}".encode()).hexdigest())
-    hi = min(held_in, max(0, len(order) - reg - 4))  # leave >=4 for a locked test
-    held_in_set = order[:hi]
-    regression = order[hi:hi + reg]
-    rest = order[hi + reg:]
-    held_out = rest[:held_out_cap] if held_out_cap else rest
-    if not held_in_set:  # degenerate tiny sets: fall back to using regression
-        held_in_set, regression = regression, []
-    return TaskSplit(held_in=held_in_set, regression=regression, held_out=held_out)
-
-
-def run(args) -> dict:
-    target = get_target(args.target)
-    ws = Path(args.workspace)
-    ws.mkdir(parents=True, exist_ok=True)
-    proposer_model = args.proposer_model or args.model
-
-    extra = {"user_model": args.user_model} if args.user_model else {}
-    opt_cfg = TargetConfig(model=args.model, k=args.opt_k, n_concurrent=args.n_concurrent,
-                           real=not args.dry_run, extra=extra)
-    test_cfg = replace(opt_cfg, k=args.test_k)
-    opt_bench = target.make_benchmark(opt_cfg)
-    test_bench = target.make_benchmark(test_cfg)
-
-    tasks = opt_bench.list_tasks()
-    if not tasks:
-        raise SystemExit(f"target {args.target} returned no tasks")
-    # held_in is a small fixed scoop (kept cheap because the gate scores on it
-    # every round); regression is the do-no-harm slice; the rest is locked held_out.
-    split = simple_split(tasks, seed=args.seed, held_in=args.held_in, reg=args.reg,
-                         held_out_cap=args.held_out)
-
-    mode = "cold-start" if (args.cold_start or target.seed_harness() is None) else "warm-start"
-    print(f"=== hillclimb: target={args.target} mode={mode} model={args.model} "
-          f"localizer={args.localizer} ===")
-    print(f"tasks N={len(tasks)} | held_in={len(split.held_in)} "
-          f"regression={len(split.regression)} | locked held_out={len(split.held_out)}")
-    print(f"baseline bar: {target.baseline_score} ({target.baseline_note})")
-    det = detectable_delta(len(split.held_out), args.sigma2, k=args.test_k) if split.held_out else 0.0
-    print(f"detectable on locked held_out @k={args.test_k}: ~{det:.3f}")
-    if args.dry_run:
-        print("[dry-run] no spend.")
-        return {"target": args.target, "mode": mode, "dry_run": True,
-                "n_tasks": len(tasks), "split": {"held_in": len(split.held_in),
-                "held_out": len(split.held_out)}, "baseline": target.baseline_score}
-
-    backend = make_backend(proposer_model, log_dir=ws / "proposer-logs")
-
-    # round-0 harness: warm (shipped seed) or cold (the coding agent generates one
-    # from the brief, retrying until it boots).
-    seed = target.resolve_seed(backend, ws, force_cold=args.cold_start,
-                               validate=opt_bench.boot_check)
-    ok, err = opt_bench.boot_check(seed)
-    if not ok:
-        raise SystemExit(f"seed harness failed boot_check: {err}")
-
-    from studio.orchestrator import Orchestrator
-
-    cfg = Config(
-        seed=args.seed,
-        score_cache=str(ws / "score_cache.jsonl"),
-        piles=PileConfig(round_size=min(args.round_size, len(split.held_in)),
-                         regression=0, held_out=0),
-        loop=LoopConfig(rounds=args.rounds, segment_length=args.segment_length,
-                        wobble_runs=args.wobble_runs,
-                        hypotheses_per_direction=args.hypotheses,
-                        localizer=args.localizer),
-        gate=GateConfig(borderline_extra_runs=args.borderline_runs,
-                        strict_dual=args.strict_gate),
-        edits=EditConfig(budget_per_part=args.budget),
-    )
-    optimization_split = replace(split, held_out=[])  # optimizer never sees locked test
-    orch = Orchestrator(workspace=ws, source_harness=seed, benchmark=opt_bench,
-                        backend=backend, config=cfg, part_map=target.part_map(),
-                        split=optimization_split)
-    orch.run()
-    optimized = orch.harness
-
-    # verdict on the locked test at test_k: seed vs optimized, paired per-task lift.
-    base = test_bench.run(seed, split.held_out, run_idx=0)
-    opt = test_bench.run(optimized, split.held_out, run_idx=0)
-    per_task = {t: opt.get(t, 0.0) - base.get(t, 0.0) for t in split.held_out}
-    base_mean = statistics.mean(base.values()) if base else 0.0
-    opt_mean = statistics.mean(opt.values()) if opt else 0.0
-    lift = statistics.mean(per_task.values()) if per_task else 0.0
-    se = (statistics.stdev(per_task.values()) / len(per_task) ** 0.5) if len(per_task) > 1 else 0.0
-    result = {
-        "target": args.target, "mode": mode, "model": args.model,
-        "n_test": len(split.held_out),
-        "baseline_harness_score": round(base_mean, 4),
-        "optimized_harness_score": round(opt_mean, 4),
-        "lift": round(lift, 4), "se": round(se, 4),
-        "published_baseline": target.baseline_score,
-        "detectable": round(det, 4),
-        "per_task_lift": per_task,
-    }
-    (ws / "result.json").write_text(json.dumps(result, indent=2))
-    print(f"\n=== VERDICT {args.target} [{mode}] ===")
-    print(f"baseline harness: {base_mean:.3f}  ->  SHO-optimized: {opt_mean:.3f}  "
-          f"(lift {lift:+.3f} ± {se:.3f}, detectable {det:.3f})")
-    print(f"vs published baseline {target.baseline_score}: "
-          f"{'BEATS' if opt_mean > (target.baseline_score or 0) else 'below'} the published bar")
-    print(f"-> {ws / 'result.json'}")
-    return result
+from studio import pipeline  # noqa: E402
+from studio.targets import list_targets  # noqa: E402
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True, help=f"one of: {list_targets()}")
-    ap.add_argument("--model", default="gpt-4.1", help="agent + proposer model (litellm)")
+    ap.add_argument("--model", default="gpt-4.1", help="agent model (litellm)")
     ap.add_argument("--proposer-model", default=None, help="override proposer model (default: --model)")
     ap.add_argument("--user-model", default=None, help="tau2 user-simulator model")
-    ap.add_argument("--cold-start", action="store_true", help="synthesize a harness even if a seed exists")
+    ap.add_argument("--cold-start", action="store_true", help="generate a harness even if a seed ships")
+    # profiling
+    ap.add_argument("--profile-only", action="store_true",
+                    help="run the input harness over ALL tasks once -> profile.json "
+                         "(per-task pass/fail + trajectories); no optimization")
+    ap.add_argument("--profile-k", type=int, default=2, help="rollouts/task for profiling")
+    ap.add_argument("--no-profile", action="store_true",
+                    help="skip profiling; use a blind random split instead of stratified")
+    ap.add_argument("--max-tasks", type=int, default=0,
+                    help="cap tasks to a deterministic seeded sample (0=all); for "
+                         "huge domains like tau2-telecom (2285 tasks)")
+    # optimizer
     ap.add_argument("--localizer", choices=("off", "inline", "agentic", "auto"),
-                    default="auto", help="evidence-grounded context localization "
-                    "(off=legacy diagnosis-only)")
+                    default="auto", help="evidence-grounded context localization (off=diagnosis-only)")
     ap.add_argument("--strict-gate", action="store_true",
                     help="require EACH slice (held_in AND regression) to not-regress; "
-                         "default is net pooled gain (a small within-noise regression "
-                         "never vetoes a real overall lift)")
+                         "default is net pooled gain")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--workspace", default="/tmp/sho_hillclimb")
     ap.add_argument("--rounds", type=int, default=8)
@@ -184,7 +72,10 @@ def main() -> None:
     ap.add_argument("--held-out", type=int, default=24,
                     help="locked test cap (0=all surplus); each is graded at test_k twice")
     args = ap.parse_args()
-    run(args)
+    if args.profile_only:
+        pipeline.profile_only(args)
+    else:
+        pipeline.run_hillclimb(args)
 
 
 if __name__ == "__main__":

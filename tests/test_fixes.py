@@ -3,7 +3,7 @@
 import pytest
 
 from studio import schemas
-from studio.backends.claude_cli import _extract_json
+from studio.backends._jsonio import extract_json as _extract_json
 from studio.backends.mock import MockBackend
 from studio.benchmark.base import Benchmark
 from studio.benchmark.toy import FAMILIES, build_toy_harness, toy_part_map

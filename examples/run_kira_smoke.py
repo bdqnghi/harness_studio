@@ -78,8 +78,8 @@ def main() -> None:
         print("\n--no-ai: skipping Mapper + Strategist steps.")
         raise SystemExit(0 if ok else 1)
 
-    from studio.backends.claude_cli import ClaudeCLIBackend
-    backend = ClaudeCLIBackend(log_dir=ws / "claude-logs")
+    from studio.backends.factory import make_backend
+    backend = make_backend(args.model, log_dir=ws / "backend-logs")
 
     print("\nStep: real Mapper")
     pmap = mapper.map_harness(backend, harness, head_lines=80)

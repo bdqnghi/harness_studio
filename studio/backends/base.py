@@ -9,7 +9,7 @@ Every AI helper (PRD §1.6) runs through a Backend. There are two call shapes:
 
 Putting both behind one interface lets the whole pipeline run against a scripted
 ``MockBackend`` (deterministic, free, used by every unit/integration test) or the
-real ``ClaudeCLIBackend`` (subprocess ``claude -p``) with no change to the loop.
+the real ``LLMBackend`` (LiteLLM) with no change to the loop.
 
 Trust boundary (PRD §3): a Backend is never handed to the gate. AI helpers only
 ever propose; only code decides.

@@ -67,3 +67,70 @@ def detectable_delta(n: int, sigma2: float, *, z: float = 1.96, k: int = 3) -> f
     and confidence ``z``: sqrt(z^2 * 2*sigma2 / (k * n)). Used to report the
     detectable floor for the per-round gate and the locked-test verdict."""
     return math.sqrt((z * z * 2.0 * sigma2) / (max(1, k) * max(1, n)))
+
+
+def random_split(tasks: list[str], *, seed: int, held_in: int, reg: int,
+                 held_out_cap: int = 0) -> TaskSplit:
+    """Blind (no-profile) 3-set split: held_in is a small fixed scoop, regression
+    a disjoint slice, held_out the (capped) locked rest. Used with --no-profile."""
+    order = _ordering(tasks, seed)
+    hi = min(held_in, max(0, len(order) - reg - 4))  # leave >=4 for a locked test
+    held_in_set = order[:hi]
+    regression = order[hi:hi + reg]
+    rest = order[hi + reg:]
+    held_out = rest[:held_out_cap] if held_out_cap else rest
+    if not held_in_set:  # degenerate tiny set: fall back to using regression
+        held_in_set, regression = regression, []
+    return TaskSplit(held_in=held_in_set, regression=regression, held_out=held_out)
+
+
+def _stratified_take(bins: dict[str, list[str]], n: int) -> list[str]:
+    """Take ``n`` items proportionally across bins (largest-remainder), preserving
+    each bin's (already-seeded) order. Representative sample across difficulty."""
+    total = sum(len(v) for v in bins.values())
+    if n <= 0 or total == 0:
+        return []
+    n = min(n, total)
+    raw = {k: n * len(v) / total for k, v in bins.items()}
+    base = {k: int(raw[k]) for k in bins}
+    rem = n - sum(base.values())
+    for k in sorted(bins, key=lambda k: (raw[k] - base[k], k), reverse=True)[:rem]:
+        base[k] += 1
+    out: list[str] = []
+    for k, v in bins.items():
+        out.extend(v[:base[k]])
+    return out
+
+
+def stratified_split(profile, *, held_in: int, reg: int, held_out_cap: int = 0,
+                     seed: int = 0, solved: float = 0.8, failing: float = 0.2) -> TaskSplit:
+    """Difficulty-stratified 3-set split from a :class:`profiler.Profile`.
+
+    - **held_out**: a representative (proportional) sample across solved/mixed/
+      failing — locked first so the final number is unbiased.
+    - **regression**: reliably-SOLVED tasks not in held_out (do-no-harm guard).
+    - **held_in**: FAILING then MIXED then (top-up) solved, not already taken —
+      so the optimizer always has learnable failures to work on.
+
+    Deterministic given ``seed``; the three sets are disjoint."""
+    bins = {"solved": [], "mixed": [], "failing": []}
+    for t in profile.pass_rate:
+        bins[profile.bin(t, solved=solved, failing=failing)].append(t)
+    bins = {k: _ordering(v, seed) for k, v in bins.items()}
+    all_tasks = _ordering(list(profile.pass_rate), seed)
+    n = len(all_tasks)
+
+    ho_n = held_out_cap or max(0, n - held_in - reg)
+    held_out = _stratified_take(bins, ho_n)
+    taken = set(held_out)
+
+    regression = [t for t in bins["solved"] if t not in taken][:reg]
+    taken |= set(regression)
+
+    learnable = ([t for t in bins["failing"] if t not in taken]
+                 + [t for t in bins["mixed"] if t not in taken]
+                 + [t for t in bins["solved"] if t not in taken])  # top-up if too few failures
+    held_in_set = learnable[:held_in]
+    if not held_in_set:  # degenerate: borrow back from whatever's left
+        held_in_set = [t for t in all_tasks if t not in taken][:max(1, held_in)]
+    return TaskSplit(held_in=held_in_set, regression=regression, held_out=held_out)

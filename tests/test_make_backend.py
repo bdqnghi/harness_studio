@@ -1,8 +1,8 @@
 """Hermetic tests for the make_backend factory and LiteLLM backend.
 
 No network: ``litellm.completion`` is patched with a fake that returns an
-OpenAI-shaped response object. Asserts routing (LLMBackend vs ClaudeCLIBackend)
-and that the inherited Tier-B JSON contract works over the litellm transport.
+OpenAI-shaped response object. Asserts the factory builds an LLMBackend and that
+the inherited Tier-B JSON contract works over the litellm transport.
 """
 
 from __future__ import annotations
@@ -90,14 +90,6 @@ def test_make_backend_passes_through_overrides_and_urls():
     assert b.tier_b_model == "ollama/llama3-mini"
     assert b.base_url == "http://localhost:11434"
     assert b.api_key == "k"
-
-
-def test_make_backend_routes_claude_cli():
-    from studio.backends.claude_cli import ClaudeCLIBackend
-
-    b = make_backend("claude-cli/sonnet")
-    assert isinstance(b, ClaudeCLIBackend)
-    assert b.tier_a_model == "sonnet"
 
 
 # --- inherited Tier-B contract over the litellm transport ---

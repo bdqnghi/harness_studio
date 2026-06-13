@@ -1,4 +1,4 @@
-"""Unit tests for GeminiBackend against a stubbed client — no network.
+"""Unit tests for LLMLoopBackend against a stubbed client — no network.
 
 Exercises the contract the orchestrator depends on: Tier-B JSON (retry on
 malformed, retry on schema-violation, fail after two), the Tier-A tool loop
@@ -13,7 +13,7 @@ import json
 import pytest
 
 from studio import schemas
-from studio.backends.gemini import GeminiBackend, GeminiBackendError, TOOL_SCHEMAS
+from studio.backends.llm_loop import LLMLoopBackend, LLMBackendError, TOOL_SCHEMAS
 
 
 # --- minimal fake of the OpenAI chat-completions client ---
@@ -82,7 +82,7 @@ class FakeClient:
 
 
 def _backend(script, **kw):
-    return GeminiBackend(client=FakeClient(script), **kw)
+    return LLMLoopBackend(client=FakeClient(script), **kw)
 
 
 # --- Tier B: prompt_json ---
@@ -103,7 +103,7 @@ def test_prompt_json_retries_on_schema_violation():
 
 def test_prompt_json_raises_after_two_failures():
     b = _backend([_text("nope"), _text("still nope")])
-    with pytest.raises(GeminiBackendError):
+    with pytest.raises(LLMBackendError):
         b.prompt_json("rank", schemas.RANKING, tag="ranker")
 
 

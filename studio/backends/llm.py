@@ -1,6 +1,6 @@
 """Provider-agnostic proposer backend via LiteLLM.
 
-Subclasses :class:`GeminiBackend` to reuse its agentic Tier-A loop and Tier-B
+Subclasses :class:`LLMLoopBackend` to reuse its agentic Tier-A loop and Tier-B
 JSON contract verbatim — only the transport changes. ``litellm.completion`` is a
 *stateless* call that speaks any provider ("gpt-5.4", "gemini/gemini-3.5-flash",
 "anthropic/claude-...", "ollama/...") behind one OpenAI-shaped response, so the
@@ -18,15 +18,15 @@ import threading
 import time
 from pathlib import Path
 
-from .gemini import (
+from .llm_loop import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TURNS,
-    GeminiBackend,
-    GeminiBackendError,
+    LLMLoopBackend,
+    LLMBackendError,
 )
 
 
-class LLMBackend(GeminiBackend):
+class LLMBackend(LLMLoopBackend):
     name = "litellm"
 
     def __init__(
@@ -105,7 +105,7 @@ class LLMBackend(GeminiBackend):
                 if self._is_retryable(e) and attempt < self.max_retries - 1:
                     time.sleep(min(2 ** attempt, 30))
                     continue
-                raise GeminiBackendError(f"litellm error (tag={tag}): {e}") from e
+                raise LLMBackendError(f"litellm error (tag={tag}): {e}") from e
             self._track(getattr(resp, "usage", None))
             self._track_cost(resp)
             choice = resp.choices[0]
@@ -115,8 +115,8 @@ class LLMBackend(GeminiBackend):
             if choice.finish_reason == "length" and not (msg.content or msg.tool_calls):
                 if max_tokens < 65_536:
                     max_tokens *= 2
-                    last = GeminiBackendError("empty output (finish_reason=length); raising max_tokens")
+                    last = LLMBackendError("empty output (finish_reason=length); raising max_tokens")
                     continue
             self._log(tag, resp)
             return resp
-        raise GeminiBackendError(f"litellm completion failed (tag={tag}): {last}")
+        raise LLMBackendError(f"litellm completion failed (tag={tag}): {last}")

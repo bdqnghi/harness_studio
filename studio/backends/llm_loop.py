@@ -50,7 +50,7 @@ _PRICE_IN = float(os.environ.get("STUDIO_GEMINI_PRICE_IN", "0.30")) / 1e6
 _PRICE_OUT = float(os.environ.get("STUDIO_GEMINI_PRICE_OUT", "2.50")) / 1e6
 
 
-class GeminiBackendError(RuntimeError):
+class LLMBackendError(RuntimeError):
     pass
 
 
@@ -183,7 +183,7 @@ def _assistant_dict(msg) -> dict:
     return d
 
 
-class GeminiBackend(Backend):
+class LLMLoopBackend(Backend):
     name = "gemini"
 
     def __init__(
@@ -224,7 +224,7 @@ class GeminiBackend(Backend):
             env_key = "OPENAI_API_KEY" if api_style == "openai" else "GEMINI_API_KEY"
             key = api_key or os.environ.get(env_key)
             if not key:
-                raise GeminiBackendError(f"{env_key} is not set")
+                raise LLMBackendError(f"{env_key} is not set")
             self._client = OpenAI(api_key=key, base_url=base_url)
 
     # --- usage / cost accounting (thread-safe) ---
@@ -272,7 +272,7 @@ class GeminiBackend(Backend):
                 if self._is_retryable(e) and attempt < self.max_retries - 1:
                     time.sleep(min(2 ** attempt, 30))
                     continue
-                raise GeminiBackendError(f"Gemini API error (tag={tag}): {e}") from e
+                raise LLMBackendError(f"Gemini API error (tag={tag}): {e}") from e
             self._track(getattr(resp, "usage", None))
             choice = resp.choices[0]
             msg = choice.message
@@ -281,11 +281,11 @@ class GeminiBackend(Backend):
             if choice.finish_reason == "length" and not (msg.content or msg.tool_calls):
                 if max_tokens < 65_536:
                     max_tokens *= 2
-                    last = GeminiBackendError("empty output (finish_reason=length); raising max_tokens")
+                    last = LLMBackendError("empty output (finish_reason=length); raising max_tokens")
                     continue
             self._log(tag, resp)
             return resp
-        raise GeminiBackendError(f"Gemini completion failed (tag={tag}): {last}")
+        raise LLMBackendError(f"Gemini completion failed (tag={tag}): {last}")
 
     def _log(self, tag, resp) -> None:
         if not self.log_dir:
@@ -319,7 +319,7 @@ class GeminiBackend(Backend):
             except (JSONParseError, schemas.SchemaError) as e:
                 last_err = e
                 full = f"{base}\n\nYour previous reply was invalid ({e}). Reply with valid JSON only."
-        raise GeminiBackendError(f"invalid JSON after retry (tag={tag}): {last_err}")
+        raise LLMBackendError(f"invalid JSON after retry (tag={tag}): {last_err}")
 
     # --- Tier A: agentic tool-calling loop that edits the workspace ---
 
@@ -395,7 +395,7 @@ class GeminiBackend(Backend):
 
         roots = [Path(d).resolve() for d in (read_dirs or [])]
         if not roots:
-            raise GeminiBackendError("run_explore requires at least one read_dir")
+            raise LLMBackendError("run_explore requires at least one read_dir")
         messages = [
             {"role": "system",
              "content": EXPLORE_PREAMBLE.format(read_dirs=", ".join(str(d) for d in roots))},
@@ -436,7 +436,7 @@ class GeminiBackend(Backend):
                         result = f"ERROR: {type(e).__name__}: {e}"
                 messages.append({"role": "tool", "tool_call_id": tc.id,
                                  "content": _cap(result, MAX_TOOL_OUTPUT)})
-        raise GeminiBackendError(
+        raise LLMBackendError(
             f"run_explore did not submit valid findings (tag={tag}): {last_err}")
 
     def _dispatch_readonly(self, name, args, roots) -> str:
