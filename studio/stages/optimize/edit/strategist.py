@@ -209,14 +209,19 @@ def implement_hypothesis(
     localization: list[dict] | None = None,
     evidence: dict | None = None,
     evidence_dir: Path | None = None,
+    brief: str | None = None,
 ) -> Strategy:
     """Stage 2 of the tree path: one Tier-A run implementing ONE pre-selected
     text hypothesis (an idea_tree Node). The hypothesis is the contract — the
     agent implements it, it does not get to substitute its own idea; competing
-    ideas were already compared cheaply as text at stage 1."""
+    ideas were already compared cheaply as text at stage 1.
+
+    ``brief`` (optional) is the win-rate ProposalBrief: the target pattern + its
+    ground-truth diffs + the class-level (not task-specific) guard."""
     dnt = ", ".join(do_not_touch or []) or "(none)"
     insights = "\n".join(f"- {i}" for i in (validated_insights or []))
     insights_block = f"\n\nValidated insights from sibling ideas:\n{insights}" if insights else ""
+    brief_block = f"\n\n{brief}" if brief else ""
     instruction = (
         "Implement EXACTLY this hypothesis — it is fixed and non-negotiable. "
         "Make the smallest coherent change that realizes it and keep the "
@@ -226,7 +231,8 @@ def implement_hypothesis(
         f"Hypothesis: {node.title}\n"
         f"Mechanism: {node.mechanism}\n"
         f"Edit to make: {node.hypothesis}\n"
-        f"Predicted observable effect: {node.observable}\n\n"
+        f"Predicted observable effect: {node.observable}"
+        f"{brief_block}\n\n"
         f"Diagnosis of this round's failures:\n{_format_diagnosis(diagnosis)}\n\n"
         f"Do-not-touch files: {dnt}{_editable_block(editable_files)}"
         f"{_format_localization(localization)}{_format_evidence(evidence)}{insights_block}"

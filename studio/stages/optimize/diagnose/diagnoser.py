@@ -103,6 +103,7 @@ def _diagnose_structured(
             "root_cause": n.get("root_cause") or checks,
             "failing_task_ids": [r.task_id for r in recs],          # DETERMINISTIC
             "tasks_affected": len(recs),                            # DETERMINISTIC count
+            "gt_diff_samples": sorted({d for r in recs for d in r.gt_diff})[:3],  # grounded diffs
             "blamed_part": n.get("blamed_part", "unclear"),
             "confidence": float(n.get("confidence", 0.5) or 0.5),
             "verifier_cause": checks,                               # ground truth, not guessed

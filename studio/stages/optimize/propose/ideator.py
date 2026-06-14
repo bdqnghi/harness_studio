@@ -82,11 +82,13 @@ def ideate(
     backend: Backend, direction: Node, *, diagnosis: list[dict],
     validated_insights: list[str], falsified: list[str], pending: list[str],
     k: int = 4, model: str | None = None, trace_evidence: dict | None = None,
+    brief: str | None = None,
 ) -> list[dict]:
     """k hypotheses under ``direction``: title/mechanism/hypothesis/observable.
 
     ``trace_evidence`` (optional {task_id: excerpt}) grounds ideation in the
-    actual failure transcripts, not just the diagnosis summary."""
+    actual failure transcripts. ``brief`` (optional) is the win-rate ProposalBrief
+    for the round's target pattern — aim the ideas at flipping that whole class."""
     evidence = "\n".join(
         f"- [{d.get('pattern_id', '?')}] {d.get('root_cause', '')} "
         f"(verifier: {d.get('verifier_cause', '')}; agent: {d.get('agent_mechanism', '')}; "
@@ -97,6 +99,10 @@ def ideate(
     sections = [
         f"Direction under exploration: {direction.title}\n"
         f"Mechanism: {direction.mechanism}",
+    ]
+    if brief:
+        sections.append(brief)
+    sections += [
         f"This round's failure evidence:\n{evidence}",
         f"Validated insights from already-tested ideas (build on these):\n{insights}",
     ]

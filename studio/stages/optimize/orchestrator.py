@@ -25,7 +25,7 @@ from pathlib import Path
 from studio.backends.base import Backend
 from studio.benchmark.base import Benchmark
 from studio.benchmark.instrument import InstrumentedBenchmark, RewardHackError
-from studio.stages.optimize.diagnose import diagnoser, runner
+from studio.stages.optimize.diagnose import diagnoser, patterns, runner
 from studio.stages.optimize.propose import ideator, insight
 from studio.stages.optimize.edit import localizer, mapper, shell, strategist, structural_check
 from studio.stages.optimize.evaluate import deep_auditor, noise_floor
@@ -294,6 +294,24 @@ class Orchestrator:
             self._reject(round_idx, "no addressable failure patterns")
             return
 
+        # Quantify + rank the patterns and aim the proposer at the highest
+        # expected-win one (noise-aware: bundle when no single pattern can clear
+        # the noise floor). The brief carries the target's ground-truth diffs.
+        n_held_in = len(self.split.held_in)
+        ranked = patterns.aggregate(addressable, held_in_size=n_held_in,
+                                    noise_floor=self.state.noise_floor)
+        target, bundled = patterns.choose_target(
+            ranked, held_in_size=n_held_in, noise_floor=self.state.noise_floor)
+        brief = None
+        if target is not None:
+            brief = patterns.ProposalBrief.from_pattern(
+                target, held_in_size=n_held_in, bundled=bundled).render()
+            self.progress.emit(
+                "targeting", round=round_idx, target=target.pattern_id,
+                reach=target.tasks_affected, expected_win=round(target.expected_win, 4),
+                unwinnable=target.unwinnable, bundled=bundled,
+                pattern_counts={p.pattern_id: p.tasks_affected for p in ranked})
+
         evidence = {f.task_id: f.trace for f in report.failures if f.trace}
         self._route_directions(round_idx, addressable)
         rng = random.Random(self.config.seed * 1_000_003 + round_idx)
@@ -301,7 +319,7 @@ class Orchestrator:
         if direction is None:
             self._reject(round_idx, "no selectable directions")
             return
-        node = self._select_or_ideate(round_idx, direction, addressable, evidence)
+        node = self._select_or_ideate(round_idx, direction, addressable, evidence, brief=brief)
         if node is None:
             self._reject(round_idx, f"ideation produced no hypotheses for {direction.id}")
             return
@@ -318,13 +336,14 @@ class Orchestrator:
             validated_insights=self.tree.validated_insights(direction.id),
             editable_files=self.part_map.editable_files(),
             localization=localization, evidence=evidence, evidence_dir=evidence_dir,
+            brief=brief,
         )
         survivors = self._shell_filter([strategy])
         if not survivors:
             self._burn_retry(round_idx, node, "implementation dropped at the shell")
             self._reject(round_idx, f"{node.id}: implementation dropped at the shell")
             return
-        self._test_tree(round_idx, direction, node, survivors[0], addressable)
+        self._test_tree(round_idx, direction, node, survivors[0], addressable, target=target)
 
     def _route_directions(self, round_idx: int, patterns: list[dict]) -> None:
         """Assign this round's failure patterns to direction nodes (the only
@@ -351,7 +370,7 @@ class Orchestrator:
                                **mutation_event(node, "created"))
 
     def _select_or_ideate(self, round_idx: int, direction, diagnosis: list[dict],
-                          evidence: dict | None = None):
+                          evidence: dict | None = None, *, brief: str | None = None):
         """Frontier first: a pending (or retryable noise-killed) hypothesis is
         consumed WITHOUT a new ideation call — paid-for ideas are not
         regenerated. Only an empty frontier buys one Tier-B ideation."""
@@ -369,7 +388,7 @@ class Orchestrator:
             falsified=self.tree.falsified_constraints(),
             pending=self.tree.pending_titles(),
             k=self.config.loop.hypotheses_per_direction,
-            trace_evidence=evidence,
+            trace_evidence=evidence, brief=brief,
         )
         nodes = []
         for h in hyps:
@@ -388,7 +407,7 @@ class Orchestrator:
         return nodes[0] if nodes else None
 
     def _test_tree(self, round_idx: int, direction, node, s: Strategy,
-                   diagnosis: list[dict]) -> None:
+                   diagnosis: list[dict], *, target=None) -> None:
         acceptance = AcceptanceCheck(
             self.benchmark, self.split.held_in, self.state.noise_floor,
             regression_tasks=self.split.regression,
@@ -426,6 +445,12 @@ class Orchestrator:
             "gain_regression": round(decision.regression_gain, 4),
             "runs_used": decision.runs_used, "borderline": decision.borderline,
         }
+        if target is not None:
+            # Loop-close: record which pattern this edit targeted + its reach
+            # before the edit. The "after" count is the NEXT round's diagnosis for
+            # the same signature (free, no extra run) — visible in progress.jsonl.
+            evidence["target_pattern"] = target.pattern_id
+            evidence["target_reach_before"] = target.tasks_affected
 
         if decision.accept:
             self.harness = s.candidate.copy_to(self.state.harness_dir)

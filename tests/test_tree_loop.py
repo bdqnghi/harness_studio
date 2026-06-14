@@ -253,6 +253,9 @@ def test_localization_reaches_editor_tree(tmp_path):
                for p in impl_prompts)                              # validated target reached editor
     # ideation was also grounded in the transcripts
     assert any("FAILMARK-" in p for t, p in backend.prompt_log if t == "ideator")
+    # the win-rate ProposalBrief (target pattern + class-level guard) reached the editor
+    assert any("TARGET FAILURE PATTERN" in p for p in impl_prompts)
+    assert any(e["event"] == "targeting" for e in events)          # noise-aware targeting fired
 
 
 def test_localizer_off_makes_no_localizer_calls(tmp_path):
