@@ -41,6 +41,9 @@ from studio.core.observe import ProgressLog, decision_dict
 from studio.core.parts import PartMap
 from studio.core.state import RoundOutcome, WorkspaceState
 
+# Canonical taxonomy: cap new directions minted in one round (bounded emergence).
+_MAX_NEW_DIRECTIONS_PER_ROUND = 3
+
 
 @dataclass
 class RunResult:
@@ -285,7 +288,10 @@ class Orchestrator:
         if not report.failures:
             self._reject(round_idx, "no failures on the held-in batch")
             return
-        diagnosis = diagnoser.diagnose(self.backend, report.failures, records=report.records)
+        # A/B knob: "engine" uses the structured records; "legacy" forces the
+        # flat-trace path (records suppressed) so the two can be compared.
+        use_records = report.records if self.config.loop.diagnose_mode == "engine" else None
+        diagnosis = diagnoser.diagnose(self.backend, report.failures, records=use_records)
         self.progress.emit("diagnosis_done", round=round_idx,
                            n_patterns=len(diagnosis),
                            blamed_parts=[d.get("blamed_part", "") for d in diagnosis])
@@ -347,14 +353,29 @@ class Orchestrator:
 
     def _route_directions(self, round_idx: int, patterns: list[dict]) -> None:
         """Assign this round's failure patterns to direction nodes (the only
-        place directions are created)."""
+        place directions are created).
+
+        Canonical taxonomy (Phase 3): a pattern whose verifier-cause signature
+        already names a direction is **merged deterministically** into it — recurring
+        failure modes keep ONE stable direction across rounds (so counts/Thompson
+        stats are comparable), and only genuinely-novel signatures reach the LLM
+        router, capped per round (bounded emergence)."""
+        by_sig = {d.signature.get("verifier_cause"): d
+                  for d in self.tree.directions() if d.signature.get("verifier_cause")}
+        novel = [p for p in patterns
+                 if not (p.get("verifier_cause") and p["verifier_cause"] in by_sig)]
+        if not novel:
+            return  # every pattern maps to an existing direction — nothing to create
         assignments = ideator.assign_directions(
-            self.backend, self.tree.directions(), patterns
+            self.backend, self.tree.directions(), novel
         )
-        by_pattern = {p.get("pattern_id"): p for p in patterns}
+        by_pattern = {p.get("pattern_id"): p for p in novel}
+        created = 0
         for a in assignments:
             if a.get("direction_id"):
                 continue  # routed onto an existing direction
+            if created >= _MAX_NEW_DIRECTIONS_PER_ROUND:
+                break  # bounded emergence: don't explode the taxonomy in one round
             p = by_pattern.get(a.get("pattern_id"), {})
             node = self.tree.add_direction(
                 (a.get("new_title") or p.get("root_cause") or a.get("pattern_id") or "?")[:80],
@@ -366,6 +387,7 @@ class Orchestrator:
                 },
                 round_idx,
             )
+            created += 1
             self.progress.emit("tree_mutation", round=round_idx,
                                **mutation_event(node, "created"))
 

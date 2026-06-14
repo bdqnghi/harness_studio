@@ -49,6 +49,9 @@ class LoopConfig:
     # Context localization (stages/optimize/localizer.py): "off" (diagnosis-only, the
     # legacy behavior) | "inline" | "agentic" | "auto" (pick by difficulty).
     localizer: str = "off"
+    # Diagnosis engine: "engine" (structured, verifier-grounded patterns) |
+    # "legacy" (flat-trace single-call clustering). The A/B knob.
+    diagnose_mode: str = "engine"
 
 
 @dataclass

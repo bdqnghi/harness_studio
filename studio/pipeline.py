@@ -57,7 +57,8 @@ def _config(args, ws: Path, split: TaskSplit) -> Config:
                          regression=0, held_out=0),
         loop=LoopConfig(rounds=args.rounds, segment_length=args.segment_length,
                         noise_floor_runs=args.noise_floor_runs,
-                        hypotheses_per_direction=args.hypotheses, localizer=args.localizer),
+                        hypotheses_per_direction=args.hypotheses, localizer=args.localizer,
+                        diagnose_mode=getattr(args, "diagnose", "engine")),
         acceptance=AcceptanceConfig(borderline_extra_runs=args.borderline_runs, strict_dual=args.strict_acceptance),
         edits=EditConfig(budget_per_part=args.budget),
     )

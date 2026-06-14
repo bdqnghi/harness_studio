@@ -52,6 +52,10 @@ def main() -> None:
     ap.add_argument("--strict-acceptance", action="store_true",
                     help="require EACH slice (held_in AND regression) to not-regress; "
                          "default is net pooled gain")
+    ap.add_argument("--diagnose", choices=("engine", "legacy"), default="engine",
+                    help="failure diagnosis: 'engine' (structured verifier-grounded "
+                         "patterns + win-rate targeting) or 'legacy' (flat-trace "
+                         "clustering). For the engine A/B.")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--workspace", default="/tmp/sho_hillclimb")
     ap.add_argument("--rounds", type=int, default=8)

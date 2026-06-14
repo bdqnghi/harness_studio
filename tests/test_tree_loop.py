@@ -168,6 +168,15 @@ def test_tree_loop_climbs_and_records_statuses(tmp_path):
     assert orch.tree.node("d1h3").evidence.get("audit_confirmed") is True
 
 
+def test_canonical_taxonomy_merges_recurring_signature(tmp_path):
+    # Same failure signature recurs every round -> ONE stable direction (merged
+    # deterministically), not a new direction per round.
+    _, orch = _run_tree(tmp_path)
+    assert len(orch.tree.directions()) == 1
+    # the LLM router is consulted only for the first (novel) round, then merges
+    assert sum(1 for k, t in orch.backend.calls if t == "direction-router") == 1
+
+
 def test_two_stage_order_and_frontier_reuse(tmp_path):
     _, orch = _run_tree(tmp_path)
     backend = orch.backend
