@@ -37,7 +37,9 @@ class EvidenceToyBenchmark(ToyBenchmark):
             if s < 1.0:
                 self.evidence_store.put(h, TaskEvidence(
                     task_id=tid, reward=s,
-                    signals=[VerifierSignal("test", tid.split("-")[0], False, "op failed")],
+                    # One uniform failed check -> the structured diagnoser groups all
+                    # failures into a single pattern (mirrors the single-DIAG design).
+                    signals=[VerifierSignal("test", "op", False, "op failed")],
                     windows=[TraceWindow(tid, 0, 0, 0,
                              [{"role": "assistant", "content": f"FAILMARK-{tid}"}], "failed")],
                 ))
@@ -58,7 +60,7 @@ class EvidenceToyBenchmark(ToyBenchmark):
 # A localization target that survives the citation guard: pure addition (empty
 # current_text) into a real editable file, citing a task that fails every round.
 _LOC = {"targets": [{
-    "pattern_id": "p1", "target_file": "instructions.txt", "current_text": "",
+    "pattern_id": "g0", "target_file": "instructions.txt", "current_text": "",
     "target_locator": "the rules section", "change_kind": "add_rule",
     "evidence": [{"task_id": "add-6", "quote": "FAILMARK-add-6"}],
 }]}
@@ -69,7 +71,7 @@ SPLIT = TaskSplit(
 )
 
 DIAG = [{
-    "pattern_id": "p1", "description": "several ops fail",
+    "pattern_id": "g0", "description": "several ops fail",
     "root_cause": "buggy or disabled ops", "failing_task_ids": ["reverse-6"],
     "blamed_part": "tool_code", "confidence": 0.8,
     "verifier_cause": "wrong output", "agent_mechanism": "op missing or buggy",
@@ -77,10 +79,10 @@ DIAG = [{
 }]
 
 NEW_DIRECTION = {"assignments": [{
-    "pattern_id": "p1", "direction_id": "",
+    "pattern_id": "g0", "direction_id": "",
     "new_title": "broken ops", "new_mechanism": "ops buggy or disabled",
 }]}
-ROUTE_TO_D1 = {"assignments": [{"pattern_id": "p1", "direction_id": "d1"}]}
+ROUTE_TO_D1 = {"assignments": [{"pattern_id": "g0", "direction_id": "d1"}]}
 
 HYPS_R1 = {"hypotheses": [
     {"title": "disable echo", "mechanism": "remove distraction",

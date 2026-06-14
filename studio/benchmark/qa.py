@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable
 
+from ..core.evidence import EvidenceStore, TaskEvidence, VerifierSignal
 from ..core.harness import Harness
 from .base import Benchmark
 
@@ -74,6 +75,9 @@ class QABenchmark(Benchmark):
         # Per-(harness_hash, task_id) failure excerpt for the Diagnoser. Versioned
         # by harness so a candidate's run is never attributed to the live harness.
         self._traces: dict[tuple[str, str], str] = {}
+        # Structured evidence (one "answer" VerifierSignal per failing task) so the
+        # diagnosis engine gets the same grounded path as tau2 (gold vs prediction).
+        self.evidence_store = EvidenceStore()
 
     # --- discovery ---
 
@@ -102,6 +106,13 @@ class QABenchmark(Benchmark):
             if t == task_id:
                 return v
         return ""
+
+    def last_evidence(self, task_id: str, *, harness: Harness | None = None):
+        """Structured evidence (the gold-vs-prediction check) for the diagnosis
+        engine; None when unavailable (e.g. a passing task or no harness scope)."""
+        if harness is None:
+            return None
+        return self.evidence_store.get(harness.content_hash(), str(task_id))
 
     # --- scoring ---
 
@@ -146,12 +157,20 @@ class QABenchmark(Benchmark):
         mean = sum(scores) / len(scores) if scores else 0.0
         if worst < 1.0:
             gold = " | ".join(task.gold) if task.gold else "(grader-defined)"
+            said = worst_output.strip()[:600]
             self._traces[(harness_hash, task.id)] = (
                 f"Q: {self.describe(task.id)}\n"
                 f"gold: {gold}\n"
-                f"model said: {worst_output.strip()[:600]}\n"
+                f"model said: {said}\n"
                 f"score: {worst:.2f}"
             )
+            # Structured evidence: one "answer" check that failed (the gold diff).
+            self.evidence_store.put(harness_hash, TaskEvidence(
+                task_id=task.id, reward=worst,
+                signals=[VerifierSignal(
+                    kind="answer", name="match", passed=False,
+                    detail=f"answered '{said}', expected one of [{gold}] (score {worst:.2f})")],
+            ))
         return mean
 
     def run(

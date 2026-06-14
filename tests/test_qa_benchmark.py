@@ -60,6 +60,20 @@ def test_run_scores_and_records_failure_trace(tmp_path):
     assert b.last_trace("a", harness=h) == ""
 
 
+def test_last_evidence_is_structured_on_failure(tmp_path):
+    tasks = [QATask(id="a", question="qa", gold=["yes"]),
+             QATask(id="b", question="qb", gold=["yes"])]
+    b = _Bench({"a": "yes", "b": "no"}, tasks=tasks, grader=_grade_exact,
+               model="stub", k=1, n_concurrent=2)
+    h = _harness(tmp_path)
+    b.run(h, ["a", "b"], run_idx=0)
+    ev = b.last_evidence("b", harness=h)
+    assert ev is not None and ev.reward == 0.0
+    failed = [s for s in ev.signals if not s.passed]
+    assert failed and failed[0].kind == "answer" and "no" in failed[0].detail
+    assert b.last_evidence("a", harness=h) is None       # passing task -> no evidence
+
+
 def test_boot_check_requires_nonempty_prompt(tmp_path):
     b = _Bench({}, tasks=[QATask(id="a", question="q")], grader=_grade_exact, model="stub")
     good = _harness(tmp_path)

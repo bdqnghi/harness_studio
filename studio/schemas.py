@@ -103,6 +103,28 @@ DIAGNOSIS = {
     },
 }
 
+# Structured-diagnose naming pass: failing tasks are pre-grouped deterministically
+# by their failed-check signature; the LLM only NAMES each group (membership +
+# counts stay deterministic). One item per group_id.
+PATTERN_NAMES = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["group_id", "root_cause", "blamed_part"],
+        "properties": {
+            "group_id": {"type": "string"},
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "root_cause": {"type": "string"},
+            "blamed_part": {"type": "string"},
+            "agent_mechanism": {"type": "string"},
+            "addressable": {"type": "boolean"},
+            "confidence": {"type": "number"},
+        },
+    },
+}
+
 # Mapper (§5.0a): label files into the seven part types.
 PART_MAP = {
     "type": "object",

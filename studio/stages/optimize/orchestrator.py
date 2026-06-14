@@ -285,7 +285,7 @@ class Orchestrator:
         if not report.failures:
             self._reject(round_idx, "no failures on the held-in batch")
             return
-        diagnosis = diagnoser.diagnose(self.backend, report.failures)
+        diagnosis = diagnoser.diagnose(self.backend, report.failures, records=report.records)
         self.progress.emit("diagnosis_done", round=round_idx,
                            n_patterns=len(diagnosis),
                            blamed_parts=[d.get("blamed_part", "") for d in diagnosis])

@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 
 from studio.benchmark.base import Benchmark
 from studio.core.harness import Harness
+from studio.stages.optimize.diagnose import signals
+from studio.stages.optimize.diagnose.signals import FailureSignal
 
 
 @dataclass
@@ -24,6 +26,9 @@ class Failure:
 class RunReport:
     scores: dict[str, float]
     failures: list[Failure] = field(default_factory=list)
+    # Structured per-task analysis when the benchmark exposes ``last_evidence``
+    # (tau2/SWE); empty for adapters that only have the flat ``last_trace`` (toy).
+    records: list[FailureSignal] = field(default_factory=list)
 
     @property
     def pass_rate(self) -> float:
@@ -34,9 +39,14 @@ def run_batch(
     benchmark: Benchmark, harness: Harness, task_ids: list[str]
 ) -> RunReport:
     scores = benchmark.run(harness, task_ids, run_idx=0)
-    failures = [
-        Failure(tid, benchmark.describe(tid), trace=benchmark.last_trace(tid, harness=harness))
-        for tid, s in scores.items()
-        if s < 1.0
-    ]
-    return RunReport(scores=scores, failures=failures)
+    failures: list[Failure] = []
+    records: list[FailureSignal] = []
+    for tid, s in scores.items():
+        if s >= 1.0:
+            continue
+        failures.append(Failure(
+            tid, benchmark.describe(tid), trace=benchmark.last_trace(tid, harness=harness)))
+        ev = benchmark.last_evidence(tid, harness=harness)
+        if ev is not None:
+            records.append(signals.from_evidence(ev, score=s))
+    return RunReport(scores=scores, failures=failures, records=records)
